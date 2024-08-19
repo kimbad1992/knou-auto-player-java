@@ -1,0 +1,26 @@
+plugins {
+    id 'java'
+}
+
+group = 'org.knouauto'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+
+    // Selenium
+    implementation 'org.seleniumhq.selenium:selenium-java:4.23.0'
+    implementation 'org.seleniumhq.selenium:selenium-devtools-v126:4.23.0'
+
+    // WebDriverManager
+    implementation 'io.github.bonigarcia:webdrivermanager:5.9.1'
+}
+
+test {
+    useJUnitPlatform()
+}
