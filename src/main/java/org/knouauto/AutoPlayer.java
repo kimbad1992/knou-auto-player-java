@@ -92,7 +92,15 @@ public class AutoPlayer {
     }
 
     // SwingWorker의 작업 완료 / 예외로 인한 작업 종료시 호출
-    private synchronized void cleanup() {
+    private void cleanup() {
+        if (isPlayingVideo) {
+            try {
+                endVideo(); // 비디오 재생 중이면 종료 처리
+            } catch (Exception e) {
+                log.error("Cleanup 중 강의 종료 실패: " + e.getMessage());
+            }
+        }
+
         if (driver != null) {
             driver.quit();
             driver = null;
@@ -228,7 +236,6 @@ public class AutoPlayer {
                 }
 
                 String title = lecture.getTitle() + " :: " + video.getTitle();
-                log.info("재생 준비 " + title);
 
                 // 비디오 재생
                 try {
@@ -236,7 +243,7 @@ public class AutoPlayer {
                         return; // 작업이 취소되었으면 즉시 종료
                     }
 
-                    log.info("playing " + title);
+                    log.info("재생시작 :: " + title);
 
                     // 메인 창으로 포커스 전환
                     switchToMainWindow();
@@ -260,7 +267,7 @@ public class AutoPlayer {
 
                     js.executeScript("arguments[0].click();", showButton);
 
-                    log.info("비디오 표시 버튼 클릭 완료: " + title);
+                    // log.info("비디오 표시 버튼 클릭 완료: " + title);
 
                     // 팝업 창으로 포커스 전환
                     switchToPopupWindow();
@@ -293,7 +300,7 @@ public class AutoPlayer {
                 try {
                     WebElement playButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.PLAY.get())));
                     playButton.click();
-                    log.info("비디오 재생 버튼 클릭 완료: " + title);
+                    // log.info("비디오 재생 버튼 클릭 완료: " + title);
                 } catch (Exception e) {
                     log.error("비디오 재생 버튼을 찾지 못했습니다.");
                     continue;
@@ -336,7 +343,7 @@ public class AutoPlayer {
             elapsedSeconds = stringToSecond(elapsedTime);
             double elapsedPercent = (double) elapsedSeconds / totalSeconds * 100;
 
-            log.logProgress(title, elapsedPercent);
+            log.logProgress(title, elapsedTime, elapsedPercent);
 
             if (elapsedPercent >= VIDEO_ELAPSE_PERCENT) {
                 keepPlaying = false;
@@ -350,7 +357,7 @@ public class AutoPlayer {
         log.info("강의 시청 완료: " + title);
     }
 
-    public synchronized void endVideo() {
+    public void endVideo() {
         try {
             switchToPopupWindow();
 

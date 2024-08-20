@@ -11,6 +11,9 @@ public class ColorLogger {
     private JTextPane logTextPane;
     private StyledDocument doc;
 
+    private final String[] PROGRESS_ANIMATION = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+    private int PROGRESS_TICK = 0;
+
     public ColorLogger(JTextPane logTextPane) {
         this.logTextPane = logTextPane;
         this.doc = logTextPane.getStyledDocument();
@@ -36,11 +39,10 @@ public class ColorLogger {
         logMessage(message, "SYSTEM");
     }
 
-    public void logProgress(String title, double progress) {
+    public void logProgress(String title, String elapsedTime, double percent) {
         SwingUtilities.invokeLater(() -> {
-            String message = String.format("%s 수강 중... %.2f%% 완료...", title, progress);
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-
+            String spinner = PROGRESS_ANIMATION[PROGRESS_TICK++ % PROGRESS_ANIMATION.length]; // 애니메이션 효과
+            String formattedPercent = String.format("%.2f", percent) + "%";
             try {
                 // 기존 텍스트에서 마지막 줄을 찾아서 지우기
                 int lastLineStart = doc.getText(0, doc.getLength()).lastIndexOf('\n', doc.getLength() - 2);
@@ -48,21 +50,18 @@ public class ColorLogger {
                     doc.remove(lastLineStart + 1, doc.getLength() - lastLineStart - 1);
                 }
 
-                // 새로운 진행 상황 추가
-                appendColoredText(timestamp + " - ", Color.BLACK); // 시간
-                appendColoredText("[INFO] ", Color.BLUE); // 로그 레벨
-                appendColoredText(message + "\n", Color.DARK_GRAY); // 메시지 내용
+                appendColoredText(spinner + " ", Color.BLACK);
+                appendColoredText(title + " 수강 중... ", new Color(0, 189, 185));
+                appendColoredText(formattedPercent + " 완료... " + elapsedTime, Color.BLACK);
             } catch (BadLocationException e) {
                 e.printStackTrace();
             }
         });
     }
 
-
     private void logMessage(String message, String level) {
         SwingUtilities.invokeLater(() -> {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-
             try {
                 appendColoredText(timestamp + " - ", Color.BLACK); // 시간
                 appendColoredText("[" + level + "] ", getColorForLevel(level)); // 로그 레벨
