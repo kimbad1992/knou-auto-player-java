@@ -15,25 +15,25 @@ import javax.swing.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 public class AutoPlayer {
 
     public static final String LOGIN_URL = "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do";
     public static final String STUDY_URL = "https://ucampus.knou.ac.kr/ekp/user/study/retrieveUMYStudy.sdo";
-    public static final int VIDEO_ELAPSE_PERCENT = 60;
-    public static final long DRIVER_WAIT_SEC = 5L;
 
     public static String[] HEADLESS_OPTIONS = {"--headless", "window-size=800x600", "disable-gpu"};
     public static String[] MUTE_OPTIONS = {"--mute-audio"};
 
+    public static final int VIDEO_ELAPSE_PERCENT = 60;
+    public static final long DRIVER_WAIT_SEC = 5L;
 
     private WebDriver driver;
     private JavascriptExecutor js;
     private WebDriverWait wait;
-    private ColorLogger log;
-    private boolean isPlayingVideo = false;
+    private final ColorLogger log;
     private SwingWorker<Void, String> worker;
+
+    private boolean isPlayingVideo = false;
 
     public AutoPlayer(ColorLogger log) {
         this.log = log;
@@ -318,7 +318,7 @@ public class AutoPlayer {
     }
 
     public void watchingVideo(String title) throws InterruptedException {
-        String totalTime = (String) ((JavascriptExecutor) driver).executeScript("return arguments[0].textContent;",
+        String totalTime = (String) js.executeScript("return arguments[0].textContent;",
                 driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
         int totalSeconds = stringToSecond(totalTime);
 
@@ -330,7 +330,7 @@ public class AutoPlayer {
         isPlayingVideo = true;
 
         while (keepPlaying) {
-            String elapsedTime = (String) ((JavascriptExecutor) driver).executeScript("return arguments[0].textContent;",
+            String elapsedTime = (String) js.executeScript("return arguments[0].textContent;",
                     driver.findElement(By.cssSelector(PlayerSelector.ELAPSED.get())));
 
             elapsedSeconds = stringToSecond(elapsedTime);
@@ -354,8 +354,7 @@ public class AutoPlayer {
         try {
             switchToPopupWindow();
 
-            JavascriptExecutor jsExecutor = (JavascriptExecutor) driver;
-            jsExecutor.executeScript("fnStudyEnd();");
+            js.executeScript("fnStudyEnd();");
 
             Alert alert = wait.until(ExpectedConditions.alertIsPresent());
             alert.accept();
