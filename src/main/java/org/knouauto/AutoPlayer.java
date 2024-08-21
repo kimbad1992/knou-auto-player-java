@@ -401,6 +401,7 @@ public class AutoPlayer {
 
         isPlayingVideo = false;
 
+        log.newLine();
         log.info("강의 시청 완료: " + title);
     }
 
