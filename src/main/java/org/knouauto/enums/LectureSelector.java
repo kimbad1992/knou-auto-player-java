@@ -8,7 +8,8 @@ public enum LectureSelector {
     BODY(".lecture-progress-item-body"),
     VIDEO_ROOT("ul.lecture-list > li"),
     VIDEO_TITLE(".lecture-title"),
-    VIDEO_WATCHED("a.ch"),
+    VIDEO_WATCHED("li > a.ch"), // li 내의 a.ch 요소를 선택
+    VIDEO_EXERCISE("fieldset a.ch"), // fieldset 내의 a.ch 요소를 선택
     VIDEO_SHOW_VIDEO("a.btn.lecture-view"),
     VIDEO_WAITING("span.con-waiting");
 

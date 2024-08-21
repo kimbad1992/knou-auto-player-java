@@ -39,6 +39,16 @@ public class ColorLogger {
         logMessage(message, "SYSTEM");
     }
 
+    public void newLine() {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                doc.insertString(doc.getLength(), "\n", null);
+            } catch (BadLocationException e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
     public void logProgress(String title, String elapsedTime, double percent) {
         SwingUtilities.invokeLater(() -> {
             String spinner = PROGRESS_ANIMATION[PROGRESS_TICK++ % PROGRESS_ANIMATION.length]; // 애니메이션 효과
@@ -52,7 +62,7 @@ public class ColorLogger {
 
                 appendColoredText(spinner + " ", Color.BLACK);
                 appendColoredText(title + " 수강 중... ", new Color(0, 189, 185));
-                appendColoredText(formattedPercent + " 완료... " + elapsedTime, Color.BLACK);
+                appendColoredText(formattedPercent + " 완료... " + "[ " + elapsedTime + " ]", Color.BLACK);
             } catch (BadLocationException e) {
                 e.printStackTrace();
             }

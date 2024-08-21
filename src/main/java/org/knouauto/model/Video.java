@@ -7,6 +7,7 @@ public class Video {
     private String title;
     private boolean waiting;
     private boolean watched;
+    private boolean exercise;
 
     // 비디오 정보를 문자열로 출력하는 메서드
     @Override
@@ -53,5 +54,13 @@ public class Video {
 
     public void setWatched(boolean watched) {
         this.watched = watched;
+    }
+
+    public boolean isExercise() {
+        return exercise;
+    }
+
+    public void setExercise(boolean exercise) {
+        this.exercise = exercise;
     }
 }
