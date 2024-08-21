@@ -2,7 +2,7 @@
 
 방통대 형성평가 자동 재생기
 
-같이 방통대 다니는 친구들에게 파이썬 설치방법이 알려주기 귀찮아서
+같이 방통대 다니는 친구들에게 파이썬 설치방법을 알려주기 귀찮아서
 Aiden Lee님의 [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-player)을
 자바 Swing UI를 사용해 한번에 실행할 수 있도록 포팅 시도
 
@@ -19,8 +19,6 @@ setx JAVA_HOME "C:\YOUR\JAVA\PATH" /M
 setx PATH "%PATH%;%JAVA_HOME%\bin" /M
 pause
 ```
-
-
 
 ### 원본 프로젝트
 - **원본 프로젝트:** [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-player)

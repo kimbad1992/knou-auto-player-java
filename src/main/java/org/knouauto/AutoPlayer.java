@@ -256,8 +256,8 @@ public class AutoPlayer {
                         if (moreButton.isDisplayed()) {
                             try {
                                 js.executeScript("arguments[0].click();", moreButton);
-                                Thread.sleep(1000);
-                            } catch (InterruptedException e) {
+                                wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get())));
+                            } catch (Exception e) {
                                 log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
                             }
                         }
