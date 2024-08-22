@@ -1,5 +1,7 @@
 # KNOU Auto Player - JAVA
 
+![](https://i.imgur.com/Aa8JRrG.png)
+
 방통대 형성평가 자동 재생기
 
 같이 방통대 다니는 친구들에게 파이썬 설치방법을 알려주기 귀찮아서  
