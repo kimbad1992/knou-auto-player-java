@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 group = 'org.knouauto'
@@ -23,4 +24,14 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+// ShadowJar 설정
+shadowJar {
+    archiveBaseName.set('knou-auto-player')
+    archiveClassifier.set('fat')
+    archiveVersion.set('1.0.2')
+    manifest {
+        attributes 'Main-Class': 'org.knouauto.GUI'
+    }
 }
