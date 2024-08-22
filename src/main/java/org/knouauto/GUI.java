@@ -30,6 +30,12 @@ public class GUI extends JFrame {
 
         log = new ColorLogger(logTextPane);
         autoPlayer = new AutoPlayer(log);
+
+        // 작업 완료 시 버튼 상태로 초기 상태로 변경하는 콜백 함수
+        autoPlayer.setStopCallback(() -> {
+            startButton.setEnabled(true);
+            stopButton.setEnabled(false);
+        });
     }
 
     private void initComponents() {

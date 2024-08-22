@@ -13,9 +13,9 @@ import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
 import javax.swing.*;
+import java.awt.*;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
@@ -30,21 +30,22 @@ public class AutoPlayer {
     public static final int VIDEO_ELAPSE_PERCENT = 60;
     public static final long DRIVER_WAIT_SEC = 5L;
 
-    // TOOD : 강의 스킵용 임시 변수
-    public static final List<String> SKIP_LECTURES =
-             // Arrays.asList("철학의이해", "자료구조", "프로그래밍언어론", "UNIX시스템", "심리학에게묻다");
-             new ArrayList<>();
-
     private WebDriver driver;
-    private JavascriptExecutor js;
     private WebDriverWait wait;
-    private final ColorLogger log;
+    private JavascriptExecutor js;
     private SwingWorker<Void, String> worker;
+    private Runnable stopCallback;
+
+    private final ColorLogger log;
 
     private boolean isPlayingVideo = false;
 
     public AutoPlayer(ColorLogger log) {
         this.log = log;
+    }
+
+    public void setStopCallback (Runnable stopCallback) {
+        this.stopCallback = stopCallback;
     }
 
     public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio) {
@@ -59,11 +60,20 @@ public class AutoPlayer {
                     startLearning(userId, userPassword);
                 } catch (InterruptedException e) {
                     publish("유저 취소: " + e.getMessage());
+                } catch (UnhandledAlertException e) {
+                    if (e.getAlertText().contains("로그인 정보가 올바르지 않습니다.")) {
+                        publish(e.getAlertText());
+                    }
                 } catch (Exception e) {
                     publish("에러 발생: " + e.getMessage());
                 } finally {
                     cleanup();
                     publish("중지했습니다.");
+
+                    // 버튼 상태를 초기화하는 작업을 finally 블록에서 수행
+                    if (stopCallback != null) {
+                        SwingUtilities.invokeLater(stopCallback);
+                    }
                 }
                 return null;
             }
@@ -146,14 +156,16 @@ public class AutoPlayer {
             // 강의 목록을 가져오기
             List<WebElement> lectures = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector(LectureSelector.ROOT.get())));
 
+            // 강의 타이틀을 기준으로 체크박스를 팝업에서 선택받기
+            List<String> excludedLectures = showLectureSelectionPopup(lectures);
+
             for (WebElement lectureElement : lectures) {
                 Lecture lecture = new Lecture();
                 lecture.setId(lectureElement.getAttribute("id"));
                 lecture.setTitle(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText());
                 lecture.setLectureElement(lectureElement);  // WebElement 저장
 
-                // TODO : 테스트용 강의 스킵 임시 추가
-                if (SKIP_LECTURES.contains(lecture.getTitle().trim())) {
+                if (!excludedLectures.contains(lecture.getTitle().trim())) {
                     log.info(lecture.getTitle() + "강의를 스킵합니다.");
                     continue;
                 }
@@ -368,6 +380,7 @@ public class AutoPlayer {
                     watchingVideo(title);
                     endVideo();
                 } catch (InterruptedException e) {
+                    log.newLine();
                     log.warn("유저 취소로 인한 중단");
                 }
             }
@@ -560,4 +573,47 @@ public class AutoPlayer {
         }
     }
 
+    private List<String> showLectureSelectionPopup(List<WebElement> lectures) {
+        List<JCheckBox> checkBoxes = new ArrayList<>();
+        JPanel panel = new JPanel(new BorderLayout());
+
+        // 전체 선택/해제 체크박스
+        JCheckBox selectAllCheckBox = new JCheckBox("전체 선택/해제");
+        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        topPanel.add(selectAllCheckBox);
+
+        // 강의 목록 체크박스 패널
+        JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
+        JScrollPane scrollPane = new JScrollPane(checkBoxPanel);
+        for (WebElement lectureElement : lectures) {
+            String lectureTitle = lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText();
+            JCheckBox checkBox = new JCheckBox(lectureTitle);
+            checkBoxes.add(checkBox);
+            checkBoxPanel.add(checkBox);
+        }
+
+        // 전체 선택/해제 체크박스에 대한 액션 리스너
+        selectAllCheckBox.addActionListener(e -> {
+            boolean isSelected = selectAllCheckBox.isSelected();
+            for (JCheckBox checkBox : checkBoxes) {
+                checkBox.setSelected(isSelected);
+            }
+        });
+
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
+
+        List<String> excludedLectures = new ArrayList<>();
+        if (result == JOptionPane.OK_OPTION) {
+            for (JCheckBox checkBox : checkBoxes) {
+                if (checkBox.isSelected()) {
+                    excludedLectures.add(checkBox.getText());
+                }
+            }
+        }
+
+        return excludedLectures;
+    }
 }
