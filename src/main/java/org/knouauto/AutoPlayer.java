@@ -245,6 +245,7 @@ public class AutoPlayer {
     private void loadAndPlayLectures() {
         List<Lecture> lectures = loadLectures();
 
+        lectureLoop:
         for (Lecture lecture : lectures) {
             for (Video video : lecture.getVideos()) {
                 if (worker.isCancelled()) {
@@ -302,6 +303,8 @@ public class AutoPlayer {
                         log.warn("일일 수강 한도에 도달했습니다.");
                         handleAlertAccept(e);
                     }
+                    // 일일 수강 한도에 도달했을 시 중단
+                    break lectureLoop;
                 } catch (Exception e) {
                     log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
                 }
