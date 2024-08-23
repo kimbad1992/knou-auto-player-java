@@ -14,6 +14,7 @@ public class GUI extends JFrame {
     private JTextPane logTextPane;
     private JButton startButton;
     private JButton stopButton;
+    private JCheckBox overLimitCheckBox;
 
     private final ColorLogger log;
     private final AutoPlayer autoPlayer;
@@ -39,7 +40,7 @@ public class GUI extends JFrame {
     }
 
     private void initComponents() {
-        JPanel inputPanel = new JPanel(new GridLayout(5, 2));
+        JPanel inputPanel = new JPanel(new GridLayout(4, 2));
 
         JLabel userIdLabel = new JLabel("아이디:");
         userIdField = new JTextField();
@@ -48,6 +49,7 @@ public class GUI extends JFrame {
 
         headlessCheckBox = new JCheckBox("백그라운드 실행(Headless)");
         muteAudioCheckBox = new JCheckBox("음소거");
+        overLimitCheckBox = new JCheckBox("일일 한도 도달 시 다음 과목 수강");
 
         startButton = new JButton("Start");
         stopButton = new JButton("Stop");
@@ -63,12 +65,18 @@ public class GUI extends JFrame {
         inputPanel.add(passwordField);
         inputPanel.add(headlessCheckBox);
         inputPanel.add(muteAudioCheckBox);
-        inputPanel.add(startButton);
-        inputPanel.add(stopButton);
+        inputPanel.add(overLimitCheckBox);
+
+        // 버튼들을 별도의 패널에 추가하여 하단에 배치
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        buttonPanel.add(startButton);
+        buttonPanel.add(stopButton);
 
         add(inputPanel, BorderLayout.NORTH);
         add(scrollPane, BorderLayout.CENTER);
+        add(buttonPanel, BorderLayout.SOUTH);
     }
+
 
     private void addActionListeners() {
         startButton.addActionListener(e -> {
@@ -76,8 +84,9 @@ public class GUI extends JFrame {
             String userPassword = new String(passwordField.getPassword());
             boolean enableHeadless = headlessCheckBox.isSelected();
             boolean muteAudio = muteAudioCheckBox.isSelected();
+            boolean overLimit = overLimitCheckBox.isSelected();
 
-            autoPlayer.start(userId, userPassword, enableHeadless, muteAudio);
+            autoPlayer.start(userId, userPassword, enableHeadless, muteAudio, overLimit);
 
             startButton.setEnabled(false);
             stopButton.setEnabled(true);

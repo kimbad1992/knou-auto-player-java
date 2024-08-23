@@ -34,11 +34,13 @@ public class AutoPlayer {
     private WebDriverWait wait;
     private JavascriptExecutor js;
     private SwingWorker<Void, String> worker;
+    private String mainWindowHandle;
     private Runnable stopCallback;
 
     private final ColorLogger log;
 
     private boolean isPlayingVideo = false;
+    private boolean doOverLimit;
 
     public AutoPlayer(ColorLogger log) {
         this.log = log;
@@ -48,11 +50,13 @@ public class AutoPlayer {
         this.stopCallback = stopCallback;
     }
 
-    public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio) {
+    public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio, boolean overLimit) {
         worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 try {
+                    doOverLimit = overLimit;
+
                     // WebDriver 초기화 및 옵션 설정
                     initializeDriver(enableHeadless, muteAudio);
 
@@ -99,6 +103,8 @@ public class AutoPlayer {
         driver = new ChromeDriver(options);
         js = (JavascriptExecutor) driver;
         wait = new WebDriverWait(driver, Duration.ofSeconds(DRIVER_WAIT_SEC));
+        // Main Window 지정
+        mainWindowHandle = driver.getWindowHandle();
     }
 
     // 로그인 및 강의 실행
@@ -259,6 +265,7 @@ public class AutoPlayer {
 
         lectureLoop:
         for (Lecture lecture : lectures) {
+            videoLoop:
             for (Video video : lecture.getVideos()) {
                 if (worker.isCancelled()) {
                     return; // 작업이 취소되었으면 즉시 종료
@@ -315,8 +322,12 @@ public class AutoPlayer {
                         log.warn("일일 수강 한도에 도달했습니다.");
                         handleAlertAccept(e);
                     }
-                    // 일일 수강 한도에 도달했을 시 중단
-                    break lectureLoop;
+
+                    if (doOverLimit) {
+                        break videoLoop;
+                    } else {
+                        break lectureLoop;
+                    }
                 } catch (Exception e) {
                     log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
                 }
@@ -458,20 +469,18 @@ public class AutoPlayer {
         return seconds;
     }
 
-
     private void switchToMainWindow() {
+        driver.switchTo().window(mainWindowHandle);
         driver.switchTo().defaultContent();
-        driver.switchTo().window(driver.getWindowHandles().iterator().next());
     }
 
     private void switchToPopupWindow() {
         for (String windowHandle : driver.getWindowHandles()) {
-            if (!windowHandle.equals(driver.getWindowHandles().iterator().next())) {
+            if (!windowHandle.equals(mainWindowHandle)) {
                 driver.switchTo().window(windowHandle);
                 break;
             }
         }
-        driver.switchTo().defaultContent();
     }
 
     private void solveExam(Exam exam) {
