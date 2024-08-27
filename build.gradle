@@ -19,7 +19,12 @@ dependencies {
     implementation 'org.seleniumhq.selenium:selenium-devtools-v126:4.23.0'
 
     // WebDriverManager
-    implementation 'io.github.bonigarcia:webdrivermanager:5.9.1'
+    implementation('io.github.bonigarcia:webdrivermanager:5.9.1') {
+        exclude group: 'com.fasterxml.jackson.core', module: 'jackson-databind'
+    }
+
+    // Jackson Databind 특정 버전 추가
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.13.4.1'
 }
 
 test {
@@ -30,7 +35,7 @@ test {
 shadowJar {
     archiveBaseName.set('knou-auto-player')
     archiveClassifier.set('fat')
-    archiveVersion.set('1.0.2')
+    archiveVersion.set('1.0.3')
     manifest {
         attributes 'Main-Class': 'org.knouauto.GUI'
     }
