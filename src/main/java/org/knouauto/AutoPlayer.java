@@ -179,15 +179,7 @@ public class AutoPlayer {
                 log.info(lecture.toString());
 
                 // 강의를 펼치는 코드 추가 (JavaScript 사용)
-                WebElement moreButton = lectureElement.findElement(By.cssSelector(LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1])));
-                if (moreButton.isDisplayed()) {
-                    try {
-                        js.executeScript("arguments[0].click();", moreButton);
-                        Thread.sleep(1000);
-                    } catch (InterruptedException e) {
-                        log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
-                    }
-                }
+                expandLecture(lecture);
 
                 // 비디오 목록 가져오기
                 List<WebElement> videos = lectureElement.findElements(By.cssSelector(LectureSelector.VIDEO_ROOT.get()));
@@ -290,24 +282,7 @@ public class AutoPlayer {
                     // 메인 창으로 포커스 전환
                     switchToMainWindow();
 
-                    // 강의 펼치기
-                    WebElement showButton = driver.findElement(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get()));
-                    if (!showButton.isDisplayed()) {
-                        WebElement lectureElement = lecture.getLectureElement();
-                        WebElement moreButton = lectureElement.findElement(By.cssSelector(LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1])));
-                        if (moreButton.isDisplayed()) {
-                            try {
-                                js.executeScript("arguments[0].click();", moreButton);
-                                wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get())));
-                            } catch (Exception e) {
-                                log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
-                            }
-                        }
-                        showButton = driver.findElement(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get()));
-                    }
-                    showButton = wait.until(ExpectedConditions.elementToBeClickable(showButton));
-
-                    js.executeScript("arguments[0].click();", showButton);
+                    clickViewButton(lecture, video);
 
                     // log.info("비디오 표시 버튼 클릭 완료: " + title);
 
@@ -318,15 +293,20 @@ public class AutoPlayer {
                     wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
                 } catch (UnhandledAlertException e) {
                     String alertMsg = e.getAlertText();
-                    if (alertMsg.indexOf("초과") > 0) {
-                        log.warn("일일 수강 한도에 도달했습니다.");
-                        handleAlertAccept(e);
-                    }
+                    handleAlertAccept(e);
 
-                    if (doOverLimit) {
-                        break videoLoop;
-                    } else {
-                        break lectureLoop;
+                    if (alertMsg.contains("초과")) {
+                        // 일일 수강 한도 초과
+                        log.warn("일일 수강 한도에 도달했습니다.");
+
+                        if (doOverLimit) {
+                            break videoLoop;
+                        } else {
+                            break lectureLoop;
+                        }
+                    } else if (alertMsg.contains("진도율")) {
+                        // 진도율 체크되지 않음
+                        log.warn("진도율이 체크 되지 않고 있습니다.");
                     }
                 } catch (Exception e) {
                     log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
@@ -398,7 +378,7 @@ public class AutoPlayer {
         }
     }
 
-    public void watchingVideo(String title) throws InterruptedException {
+    private void watchingVideo(String title) throws InterruptedException {
         String totalTime = (String) js.executeScript("return arguments[0].textContent;",
                 driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
         int totalSeconds = stringToSecond(totalTime);
@@ -432,7 +412,7 @@ public class AutoPlayer {
         log.info("강의 시청 완료: " + title);
     }
 
-    public void endVideo() {
+    private void endVideo() {
         try {
             // Cleanup시 endVideo 중복호출 되지 않도록
             isPlayingVideo = false;
@@ -625,4 +605,45 @@ public class AutoPlayer {
 
         return excludedLectures;
     }
+
+    private void clickViewButton(Lecture lecture, Video video) {
+        List<WebElement> viewButtonList = driver.findElements(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get()));
+
+        if (viewButtonList.isEmpty()) {
+            // 강의보기 버튼이 존재하지 않는 경우(과목 전환 Case)
+            expandLecture(lecture);
+            waitForViewButtonAndClick(video);
+        } else {
+            WebElement viewButton = viewButtonList.get(0);
+            if (!viewButton.isDisplayed()) {
+                // 강의보기 버튼이 가시적이지 않을 경우 펼치기
+                expandLecture(lecture);
+                waitForViewButtonAndClick(video);
+            } else {
+                // 클릭 가능한 상태가 될 때까지 대기 후 클릭
+                viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
+                js.executeScript("arguments[0].click();", viewButton);
+            }
+        }
+    }
+
+    private void expandLecture(Lecture lecture) {
+        WebElement lectureElement = lecture.getLectureElement(driver);
+        WebElement expandButton = lectureElement.findElement(By.cssSelector(LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1])));
+        if (expandButton.isDisplayed()) {
+            try {
+                js.executeScript("arguments[0].click();", expandButton);
+            } catch (Exception e) {
+                log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
+            }
+        }
+    }
+
+    private void waitForViewButtonAndClick(Video video) {
+        // 강의 보기 버튼을 다시 대기
+        WebElement viewButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get())));
+        viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
+        js.executeScript("arguments[0].click();", viewButton);
+    }
+
 }
