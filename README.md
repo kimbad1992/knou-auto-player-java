@@ -1,6 +1,6 @@
 # KNOU Auto Player - JAVA
 
-![](https://i.imgur.com/Aa8JRrG.png)
+![](https://i.imgur.com/fDiGa4j.png)
 
 방통대 형성평가 자동 재생기
 
@@ -9,6 +9,10 @@ Aiden Lee님의 [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-pla
 자바 Swing UI를 사용해 한번에 실행할 수 있도록 포팅 시도
 
 Release로는 Launch4J로 Executable을 만들어 배포함
+
+- 과목 당 일일 수강 한도 초과 시 다음 과목으로 넘기기
+- 수강 과목 선택 추가
+- 연습문제 풀이 추가 (정답 여부와 상관 없이 랜덤한 선택지를 찍도록 작동)
 
 ### Required
 
