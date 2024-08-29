@@ -15,7 +15,7 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
 
     // Selenium
-    implementation 'org.seleniumhq.selenium:selenium-java:4.23.0'
+    implementation 'org.seleniumhq.selenium:selenium-java:4.23.1'
     implementation 'org.seleniumhq.selenium:selenium-devtools-v126:4.23.0'
 
     // WebDriverManager
@@ -24,7 +24,7 @@ dependencies {
     }
 
     // Jackson Databind 특정 버전 추가
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.13.4.1'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
 }
 
 test {
