@@ -6,15 +6,12 @@ import org.knouauto.logger.ColorLogger;
 import org.knouauto.model.Exam;
 import org.knouauto.model.Lecture;
 import org.knouauto.model.Video;
-import org.openqa.selenium.*;
-import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.chrome.ChromeOptions;
-import org.openqa.selenium.support.ui.ExpectedConditions;
-import org.openqa.selenium.support.ui.WebDriverWait;
+
+import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.*;
 
 import javax.swing.*;
 import java.awt.*;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -24,17 +21,14 @@ public class AutoPlayer {
     public static final String LOGIN_URL = "https://ucampus.knou.ac.kr/ekp/user/login/retrieveULOLogin.do";
     public static final String STUDY_URL = "https://ucampus.knou.ac.kr/ekp/user/study/retrieveUMYStudy.sdo";
 
-    public static String[] HEADLESS_OPTIONS = {"--headless", "window-size=800x600", "disable-gpu"};
-    public static String[] MUTE_OPTIONS = {"--mute-audio"};
-
     public static final int VIDEO_ELAPSE_PERCENT = 60;
-    public static final long DRIVER_WAIT_SEC = 5L;
 
-    private WebDriver driver;
-    private WebDriverWait wait;
-    private JavascriptExecutor js;
+    private Playwright playwright;
+    private Browser browser;
+    private BrowserContext context;
+    private Page page;
+    private Page popupPage;
     private SwingWorker<Void, String> worker;
-    private String mainWindowHandle;
     private Runnable stopCallback;
 
     private final ColorLogger log;
@@ -46,7 +40,7 @@ public class AutoPlayer {
         this.log = log;
     }
 
-    public void setStopCallback (Runnable stopCallback) {
+    public void setStopCallback(Runnable stopCallback) {
         this.stopCallback = stopCallback;
     }
 
@@ -57,17 +51,13 @@ public class AutoPlayer {
                 try {
                     doOverLimit = overLimit;
 
-                    // WebDriver 초기화 및 옵션 설정
-                    initializeDriver(enableHeadless, muteAudio);
+                    // Playwright 초기화 및 옵션 설정
+                    initializePlaywright(enableHeadless, muteAudio);
 
                     // 로그인 및 강의 실행
                     startLearning(userId, userPassword);
                 } catch (InterruptedException e) {
                     publish("유저 취소: " + e.getMessage());
-                } catch (UnhandledAlertException e) {
-                    if (e.getAlertText().contains("로그인 정보가 올바르지 않습니다.")) {
-                        publish(e.getAlertText());
-                    }
                 } catch (Exception e) {
                     publish("에러 발생: " + e.getMessage());
                 } finally {
@@ -95,16 +85,27 @@ public class AutoPlayer {
         worker.execute();
     }
 
-    // WebDriver 초기화
-    private void initializeDriver(boolean enableHeadless, boolean muteAudio) {
-        ChromeOptions options = new ChromeOptions();
-        if (enableHeadless) options.addArguments(HEADLESS_OPTIONS);
-        if (muteAudio) options.addArguments(MUTE_OPTIONS);
-        driver = new ChromeDriver(options);
-        js = (JavascriptExecutor) driver;
-        wait = new WebDriverWait(driver, Duration.ofSeconds(DRIVER_WAIT_SEC));
-        // Main Window 지정
-        mainWindowHandle = driver.getWindowHandle();
+    // Playwright 초기화
+    private void initializePlaywright(boolean enableHeadless, boolean muteAudio) {
+        playwright = Playwright.create();
+        
+        BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                .setHeadless(enableHeadless);
+        
+        if (muteAudio) {
+            launchOptions.setArgs(List.of("--mute-audio"));
+        }
+        
+        browser = playwright.chromium().launch(launchOptions);
+        context = browser.newContext();
+        page = context.newPage();
+        
+        // 팝업 페이지 처리를 위한 이벤트 리스너 설정
+        context.onPage(newPage -> {
+            if (popupPage == null) {
+                popupPage = newPage;
+            }
+        });
     }
 
     // 로그인 및 강의 실행
@@ -126,10 +127,26 @@ public class AutoPlayer {
             }
         }
 
-        if (driver != null) {
-            driver.quit();
-            driver = null;
+        if (page != null) {
+            page.close();
         }
+        
+        if (popupPage != null) {
+            popupPage.close();
+        }
+        
+        if (context != null) {
+            context.close();
+        }
+        
+        if (browser != null) {
+            browser.close();
+        }
+        
+        if (playwright != null) {
+            playwright.close();
+        }
+        
         isPlayingVideo = false;
     }
 
@@ -140,12 +157,17 @@ public class AutoPlayer {
     }
 
     private void login(String userId, String userPassword) throws Exception {
-        driver.get(LOGIN_URL);
-        driver.findElement(By.name("username")).sendKeys(userId);
-        WebElement passwordElement = driver.findElement(By.name("password"));
-        passwordElement.sendKeys(userPassword);
-        passwordElement.sendKeys(Keys.RETURN);
-        wait.until(ExpectedConditions.urlToBe(STUDY_URL));
+        page.navigate(LOGIN_URL);
+        
+        // 로그인 폼 작성
+        page.fill("input[name='username']", userId);
+        page.fill("input[name='password']", userPassword);
+        
+        // 로그인 버튼 클릭 (Enter 키 대신 클릭 사용)
+        page.press("input[name='password']", "Enter");
+        
+        // URL 변경 대기
+        page.waitForURL(STUDY_URL);
     }
 
     // 강의 로딩 메서드
@@ -160,65 +182,50 @@ public class AutoPlayer {
             log.info("강의 로딩 중...");
 
             // 강의 목록을 가져오기
-            List<WebElement> lectures = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector(LectureSelector.ROOT.get())));
+            List<ElementHandle> lectures = page.querySelectorAll(LectureSelector.ROOT.get());
 
             // 강의 타이틀을 기준으로 체크박스를 팝업에서 선택받기
-            List<String> excludedLectures = showLectureSelectionPopup(lectures);
+            List<String> includedLectures = showLectureSelectionPopup(lectures);
 
-            for (WebElement lectureElement : lectures) {
+            for (ElementHandle lectureElement : lectures) {
                 Lecture lecture = new Lecture();
                 lecture.setId(lectureElement.getAttribute("id"));
-                lecture.setTitle(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText());
-                lecture.setLectureElement(lectureElement);  // WebElement 저장
+                lecture.setTitle(lectureElement.querySelector(LectureSelector.TITLE.get()).textContent());
+                lecture.setLectureElement(lectureElement.toString());  // ElementHandle은 직접 저장할 수 없어 문자열로 변환
 
-                if (!excludedLectures.contains(lecture.getTitle().trim())) {
+                if (!includedLectures.contains(lecture.getTitle().trim())) {
                     log.info(lecture.getTitle() + "강의를 스킵합니다.");
                     continue;
                 }
 
                 log.info(lecture.toString());
 
-                // 강의를 펼치는 코드 추가 (JavaScript 사용)
+                // 강의를 펼치는 코드 추가
                 expandLecture(lecture);
 
                 // 비디오 목록 가져오기
-                List<WebElement> videos = lectureElement.findElements(By.cssSelector(LectureSelector.VIDEO_ROOT.get()));
+                List<ElementHandle> videos = lectureElement.querySelectorAll(LectureSelector.VIDEO_ROOT.get());
 
-                for (WebElement videoElement : videos) {
+                for (ElementHandle videoElement : videos) {
                     totalVideos++;
 
                     Video video = new Video();
                     video.setId(videoElement.getAttribute("id"));
-                    video.setTitle(videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_TITLE.get())).getText());
+                    video.setTitle(videoElement.querySelector(LectureSelector.VIDEO_TITLE.get()).textContent());
 
                     // 대기 중인 비디오인지 확인
-                    boolean isWaiting = false;
-                    try {
-                        WebElement waitingElement = videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_WAITING.get()));
-                        isWaiting = waitingElement != null && waitingElement.isDisplayed();
-                    } catch (NoSuchElementException e) {
-                        // 대기 상태가 아닐 경우 예외를 무시
-                    }
+                    ElementHandle waitingElement = videoElement.querySelector(LectureSelector.VIDEO_WAITING.get());
+                    boolean isWaiting = waitingElement != null && waitingElement.isVisible();
                     video.setWaiting(isWaiting);
 
                     // 시청한 비디오인지 확인
-                    boolean isWatched = false;
-                    try {
-                        WebElement watchedElement = videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_WATCHED.get()));
-                        isWatched = watchedElement != null && watchedElement.getAttribute("class").contains("on");
-                    } catch (NoSuchElementException e) {
-                        // 시청 상태가 아닐 경우 예외를 무시
-                    }
+                    ElementHandle watchedElement = videoElement.querySelector(LectureSelector.VIDEO_WATCHED.get());
+                    boolean isWatched = watchedElement != null && watchedElement.getAttribute("class").contains("on");
                     video.setWatched(isWatched);
 
                     // 연습문제 확인
-                    boolean isExercise = false;
-                    try {
-                        WebElement exerciseElement = videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_EXERCISE.get()));
-                        isExercise = exerciseElement != null && exerciseElement.getAttribute("class").contains("on");
-                    } catch (NoSuchElementException e) {
-                        // 연습문제 상태가 아닐 경우 예외를 무시
-                    }
+                    ElementHandle exerciseElement = videoElement.querySelector(LectureSelector.VIDEO_EXERCISE.get());
+                    boolean isExercise = exerciseElement != null && exerciseElement.getAttribute("class").contains("on");
                     video.setExercise(isExercise);
 
                     // 비디오 상태에 따라 카운트 증가
@@ -245,7 +252,7 @@ public class AutoPlayer {
             log.newLine();
 
         } catch (Exception e) {
-            log.error("강의 로딩 중 에러 발생.");
+            log.error("강의 로딩 중 에러 발생: " + e.getMessage());
         }
 
         return lectureList;
@@ -282,20 +289,22 @@ public class AutoPlayer {
                     // 메인 창으로 포커스 전환
                     switchToMainWindow();
 
+                    // 비디오 재생 버튼 클릭
                     clickViewButton(lecture, video);
-
-                    // log.info("비디오 표시 버튼 클릭 완료: " + title);
 
                     // 팝업 창으로 포커스 전환
                     switchToPopupWindow();
-
-                    // 프레임이 로드될 때까지 대기
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
-                } catch (UnhandledAlertException e) {
-                    String alertMsg = e.getAlertText();
-                    handleAlertAccept(e);
-
-                    if (alertMsg.contains("초과")) {
+                    
+                    // 프레임으로 전환
+                    FrameLocator playerFrameLocator = popupPage.frameLocator(PlayerSelector.ROOT.get());
+                    if (playerFrameLocator == null) {
+                        log.error("플레이어 프레임을 찾을 수 없습니다.");
+                        continue;
+                    }
+                    
+                } catch (Exception e) {
+                    String errorMessage = e.getMessage();
+                    if (errorMessage != null && errorMessage.contains("초과")) {
                         // 일일 수강 한도 초과
                         log.warn("일일 수강 한도에 도달했습니다.");
 
@@ -304,71 +313,45 @@ public class AutoPlayer {
                         } else {
                             break lectureLoop;
                         }
-                    } else if (alertMsg.contains("진도율")) {
+                    } else if (errorMessage != null && errorMessage.contains("진도율")) {
                         // 진도율 체크되지 않음
                         log.warn("진도율이 체크 되지 않고 있습니다.");
+                    } else {
+                        log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
                     }
-                } catch (Exception e) {
-                    log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
                 }
 
                 try {
-                    Thread.sleep(Duration.ofSeconds(1L));
+                    Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     log.error("대기 중 취소.");
-                }
-
-                // 비디오 재생 버튼 클릭
-                try {
-                    WebElement playButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.PLAY.get())));
-                    playButton.click();
-                    // log.info("비디오 재생 버튼 클릭 완료: " + title);
-                } catch (Exception e) {
-                    log.error("비디오 재생 버튼을 찾지 못했습니다.");
-                    continue;
-                }
-
-                try {
-                    WebElement continueButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.WATCH_CONTINUE.get())));
-                    continueButton.click();
-                    log.info("이어서 보기 클릭 완료: " + title);
-                } catch (NoSuchElementException | TimeoutException e) {
-                    // 이어서 보기 버튼이 없거나 대기 실패의 경우 Pass
                 }
 
                 // 연습 문제를 통과하지 못한 경우
                 if (!video.isExercise()) {
                     log.info("연습 문제를 확인합니다.");
-                    // 연습문제 요소를 찾기 위한 컨텍스트 전환
-                    driver.switchTo().defaultContent();
-
+                    
                     try {
-                        wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("form[id^='frm_']")));
-                        List<WebElement> examForms = driver.findElements(By.cssSelector("form[id^='frm_']"));
+                        // Playwright에서는 기본 컨텍스트로 돌아갈 필요가 없음
+                        List<ElementHandle> examForms = popupPage.querySelectorAll("form[id^='frm_']");
 
-                        for (WebElement examForm : examForms) {
-                            Exam exam = new Exam(examForm, js);
+                        for (ElementHandle examForm : examForms) {
+                            Exam exam = new Exam(examForm, popupPage);
                             solveExam(exam);  // 각 문제를 해결
                         }
 
                         log.success(title + "의 문제 풀이를 완료했습니다.");
-                    } catch (TimeoutException te) {
-                        log.info("연습 문제가 없습니다.");
                     } catch (Exception e) {
-                        log.error("연습문제 확인 중 오류 발생: " + e.getMessage());
+                        log.info("연습 문제가 없거나 처리 중 오류 발생: " + e.getMessage());
                     }
 
                     log.newLine();
-
-                    // 연습 문제 처리 후 다시 플레이어 프레임으로 전환
-                    switchToPopupWindow();
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
                 } else {
                     log.info("기존에 연습 문제를 통과한 이력이 있습니다.");
                 }
 
                 try {
-                    watchingVideo(title);
+                    playAllVideosInPopup(title);
                     endVideo();
                 } catch (InterruptedException e) {
                     log.newLine();
@@ -379,21 +362,19 @@ public class AutoPlayer {
     }
 
     private void watchingVideo(String title) throws InterruptedException {
-        String totalTime = (String) js.executeScript("return arguments[0].textContent;",
-                driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
+        FrameLocator playerFrameLocator = popupPage.frameLocator(PlayerSelector.ROOT.get());
+        String totalTime = playerFrameLocator.locator(PlayerSelector.TOTAL_DURATION.get()).textContent();
         int totalSeconds = stringToSecond(totalTime);
-
+    
         log.info("총 재생 시간: " + totalTime);
-
+    
         boolean keepPlaying = true;
         int elapsedSeconds = 0;
-
+    
         isPlayingVideo = true;
-
+    
         while (keepPlaying) {
-            String elapsedTime = (String) js.executeScript("return arguments[0].textContent;",
-                    driver.findElement(By.cssSelector(PlayerSelector.ELAPSED.get())));
-
+            String elapsedTime = playerFrameLocator.locator(PlayerSelector.ELAPSED.get()).textContent();
             elapsedSeconds = stringToSecond(elapsedTime);
             double elapsedPercent = (double) elapsedSeconds / totalSeconds * 100;
 
@@ -417,16 +398,18 @@ public class AutoPlayer {
             // Cleanup시 endVideo 중복호출 되지 않도록
             isPlayingVideo = false;
 
+            // 팝업 페이지로 전환
             switchToPopupWindow();
-
-            js.executeScript("fnStudyEnd();");
-
-            Alert alert = wait.until(ExpectedConditions.alertIsPresent());
-            alert.accept();
+            
+            // 학습 종료 스크립트 실행
+            popupPage.evaluate("fnStudyEnd();");
+            
+            // 알림 대기 및 처리
+            popupPage.waitForPopup(() -> {
+                popupPage.keyboard().press("Enter");
+            });
 
             log.info("학습 종료 완료");
-        } catch (TimeoutException e) {
-            log.error("학습 종료 알림을 찾을 수 없습니다: " + e.getMessage());
         } catch (Exception e) {
             log.error("플레이어 종료 중 에러 발생 : " + e.getMessage());
         }
@@ -450,16 +433,16 @@ public class AutoPlayer {
     }
 
     private void switchToMainWindow() {
-        driver.switchTo().window(mainWindowHandle);
-        driver.switchTo().defaultContent();
+        // Playwright에서는 page 객체를 사용하므로 메인 페이지로 전환만 필요
+        if (popupPage != null) {
+            page.bringToFront();
+        }
     }
 
     private void switchToPopupWindow() {
-        for (String windowHandle : driver.getWindowHandles()) {
-            if (!windowHandle.equals(mainWindowHandle)) {
-                driver.switchTo().window(windowHandle);
-                break;
-            }
+        // 팝업 페이지가 이미 생성되어 있다면 그 페이지를
+        if (popupPage != null) {
+            popupPage.bringToFront();
         }
     }
 
@@ -476,19 +459,8 @@ public class AutoPlayer {
                     isAnswerCorrect = choiceAnswer(exam);
                 }
 
-                // 정답/오답인 Case의 처리
-//                if (!isAnswerCorrect) {
-//                    log.info("오답입니다. 다시 시도합니다.");
-//                } else {
-//                    log.info("정답입니다. 다음 문제로 이동합니다.");
-//                }
-
                 attemptCount++;
             }
-
-//            if (!isAnswerCorrect) {
-//                log.warn("최대 시도 횟수를 초과했습니다. 다음 문제로 넘어갑니다.");
-//            }
         } catch (Exception e) {
             log.error("연습문제 풀이 도중 오류 발생: " + e.getMessage());
         }
@@ -497,72 +469,61 @@ public class AutoPlayer {
 
     private boolean descriptiveAnswer(Exam exam) {
         try {
-            List<WebElement> answerFields = exam.getExamForm().findElements(By.cssSelector(".answerTxt"));
-            for (WebElement field : answerFields) {
-                field.sendKeys("잘모루겠습니다교수님");
+            List<ElementHandle> answerFields = exam.getAnswerFields();
+            for (ElementHandle field : answerFields) {
+                field.fill("잘모루겠습니다교수님");
             }
-            exam.submitAnswer();  // Exam 클래스의 메서드를 사용하여 제출
+            exam.submitAnswer();
 
             return checkResult(exam);
-        } catch (UnhandledAlertException e) {
-            handleAlertAccept(e);
-            return false;
         } catch (Exception e) {
-            log.error("서술형 문제 처리 중 에러가 발생했습니다.");
+            handleDialogIfPresent();
+            log.error("서술형 문제 처리 중 에러가 발생했습니다: " + e.getMessage());
             return false;
         }
     }
 
     private boolean choiceAnswer(Exam exam) {
         try {
-            if (!exam.getAnswerChoices().isEmpty()) {
-                int randomIndex = new Random().nextInt(exam.getAnswerChoices().size());
-                exam.selectAnswer(randomIndex);  // Exam 클래스의 메서드를 사용하여 선택
+            List<ElementHandle> choices = exam.getAnswerChoices();
+            if (!choices.isEmpty()) {
+                int randomIndex = new Random().nextInt(choices.size());
+                exam.selectAnswer(randomIndex);
             }
-            exam.submitAnswer();  // Exam 클래스의 메서드를 사용하여 제출
+            exam.submitAnswer();
 
             return checkResult(exam);
-        } catch (UnhandledAlertException e) {
-            handleAlertAccept(e);
-            return false;
         } catch (Exception e) {
-            log.error("객관식 문제 처리 중 에러가 발생했습니다." + e.getMessage());
+            handleDialogIfPresent();
+            log.error("객관식 문제 처리 중 에러가 발생했습니다: " + e.getMessage());
             return false;
         }
     }
 
-    private boolean checkResult(Exam exam) throws UnhandledAlertException {
+    private boolean checkResult(Exam exam) {
         try {
-            WebElement resultCnt = exam.getExamForm().findElement(By.id("resultCnt"));
-            wait.until(ExpectedConditions.presenceOfElementLocated(By.id(resultCnt.getAttribute("id"))));
+            ElementHandle resultCnt = exam.getResultElement();
             String resultValue = resultCnt.getAttribute("value");
 
             return "1".equals(resultValue);
-        } catch (UnhandledAlertException e) {
-            // 문제 풀이 메서드에서 Alert을 처리하도록 Throw
-            throw e;
         } catch (Exception e) {
-            log.error("정답 확인 중 에러가 발생했습니다." + e.getMessage());
+            log.error("정답 확인 중 에러가 발생했습니다: " + e.getMessage());
             return false;
         }
     }
 
-    private void handleAlertAccept(UnhandledAlertException e) {
-        // log.error("알림이 발생했습니다: " + e.getAlertText());
+    private void handleDialogIfPresent() {
         try {
-            Alert alert = wait.until(ExpectedConditions.alertIsPresent());
-            if (alert != null) {
-                alert.accept();
-            }
-        } catch (TimeoutException te) {
-            // log.warn("Alert 대기 시간 초과: 알림이 존재하지 않습니다.");
-            // 이미 처리된 Alert이므로 PASS
-        } catch (Exception ex) {
-            log.error("Alert 처리 중 오류가 발생했습니다.");
+            // 다이얼로그(알림창) 처리를 위한 이벤트 리스너 설정
+            popupPage.onDialog(dialog -> {
+                dialog.accept();
+            });
+        } catch (Exception e) {
+            log.error("다이얼로그 처리 중 오류가 발생했습니다: " + e.getMessage());
         }
     }
 
-    private List<String> showLectureSelectionPopup(List<WebElement> lectures) {
+    private List<String> showLectureSelectionPopup(List<ElementHandle> lectures) {
         List<JCheckBox> checkBoxes = new ArrayList<>();
         JPanel panel = new JPanel(new BorderLayout());
 
@@ -574,8 +535,8 @@ public class AutoPlayer {
         // 강의 목록 체크박스 패널
         JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
         JScrollPane scrollPane = new JScrollPane(checkBoxPanel);
-        for (WebElement lectureElement : lectures) {
-            String lectureTitle = lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText();
+        for (ElementHandle lectureElement : lectures) {
+            String lectureTitle = lectureElement.querySelector(LectureSelector.TITLE.get()).textContent();
             JCheckBox checkBox = new JCheckBox(lectureTitle);
             checkBoxes.add(checkBox);
             checkBoxPanel.add(checkBox);
@@ -594,56 +555,120 @@ public class AutoPlayer {
 
         int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
 
-        List<String> excludedLectures = new ArrayList<>();
+        List<String> includedLectures = new ArrayList<>();
         if (result == JOptionPane.OK_OPTION) {
             for (JCheckBox checkBox : checkBoxes) {
                 if (checkBox.isSelected()) {
-                    excludedLectures.add(checkBox.getText());
+                    includedLectures.add(checkBox.getText());
                 }
             }
         }
 
-        return excludedLectures;
+        return includedLectures;
     }
 
     private void clickViewButton(Lecture lecture, Video video) {
-        List<WebElement> viewButtonList = driver.findElements(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get()));
-
-        if (viewButtonList.isEmpty()) {
+        String selector = "#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get();
+        ElementHandle viewButton = page.querySelector(selector);
+        
+        if (viewButton == null) {
             // 강의보기 버튼이 존재하지 않는 경우(과목 전환 Case)
             expandLecture(lecture);
             waitForViewButtonAndClick(video);
+        } else if (!viewButton.isVisible()) {
+            // 강의보기 버튼이 가시적이지 않을 경우 펼치기
+            expandLecture(lecture);
+            waitForViewButtonAndClick(video);
         } else {
-            WebElement viewButton = viewButtonList.get(0);
-            if (!viewButton.isDisplayed()) {
-                // 강의보기 버튼이 가시적이지 않을 경우 펼치기
-                expandLecture(lecture);
-                waitForViewButtonAndClick(video);
-            } else {
-                // 클릭 가능한 상태가 될 때까지 대기 후 클릭
-                viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
-                js.executeScript("arguments[0].click();", viewButton);
-            }
+            // 버튼 클릭
+            viewButton.click();
         }
     }
 
     private void expandLecture(Lecture lecture) {
-        WebElement lectureElement = lecture.getLectureElement(driver);
-        WebElement expandButton = lectureElement.findElement(By.cssSelector(LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1])));
-        if (expandButton.isDisplayed()) {
+        String expandSelector = LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1]);
+        ElementHandle expandButton = page.querySelector(expandSelector);
+        if (expandButton != null && expandButton.isVisible()) {
             try {
-                js.executeScript("arguments[0].click();", expandButton);
+                expandButton.click();
             } catch (Exception e) {
-                log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
+                log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle() + ", " + e.getMessage());
             }
         }
     }
 
     private void waitForViewButtonAndClick(Video video) {
-        // 강의 보기 버튼을 다시 대기
-        WebElement viewButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get())));
-        viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
-        js.executeScript("arguments[0].click();", viewButton);
+        String selector = "#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get();
+        // Playwright는 자동으로 요소가 나타날 때까지 대기
+        ElementHandle viewButton = page.waitForSelector(selector);
+        viewButton.click();
     }
 
+    private void playAllVideosInPopup(String title) throws InterruptedException {
+        FrameLocator playerFrameLocator = popupPage.frameLocator(PlayerSelector.ROOT.get());
+        
+        List<Locator> playButtons = getAllVideoButtonsWithScrolling(playerFrameLocator);
+        log.info("팝업 내 발견된 재생 버튼 개수: " + playButtons.size());
+    
+        for (int i = 0; i < playButtons.size(); i++) {
+            if (worker.isCancelled()) return;
+    
+            Locator playButton = playButtons.get(i);
+            
+            // 재생 버튼 클릭
+            playButton.scrollIntoViewIfNeeded();
+            playButton.click();
+    
+            Thread.sleep(1000); // 클릭 후 플레이어 로딩 대기
+    
+            // 이어보기 버튼 처리(존재하면 클릭)
+            Locator continueButton = playerFrameLocator.locator(PlayerSelector.WATCH_CONTINUE.get());
+            if (continueButton.isVisible()) {
+                continueButton.click();
+            }
+
+            // 각 비디오별 재생 시간 처리
+            String currentVideoTitle = title + " - 파트 " + (i + 1);
+            watchingVideo(currentVideoTitle);
+
+            log.info("강의 파트 시청 완료: " + currentVideoTitle);
+            log.newLine();
+        }
+    }
+
+    private List<Locator> getAllVideoButtonsWithScrolling(FrameLocator playerFrameLocator) throws InterruptedException {
+        List<Locator> playButtons = new ArrayList<>();
+        int previousSize = -1;
+    
+        while (true) {
+            Locator buttonsLocator = playerFrameLocator.locator(PlayerSelector.PLAY.get());
+            int currentSize = buttonsLocator.count();
+    
+            if (currentSize == previousSize) {
+                // 더 이상 새 요소가 로딩되지 않으면 종료
+                break;
+            }
+    
+            previousSize = currentSize;
+    
+            // 맨 마지막 요소로 스크롤하여 추가 콘텐츠 로딩 유도
+            if (currentSize > 0) {
+                buttonsLocator.nth(currentSize - 1).scrollIntoViewIfNeeded();
+                Thread.sleep(500); // 로딩 대기
+            } else {
+                break;
+            }
+        }
+    
+        Locator allButtons = playerFrameLocator.locator(PlayerSelector.PLAY.get());
+        int count = allButtons.count();
+        List<Locator> result = new ArrayList<>();
+        
+        for (int i = 0; i < count; i++) {
+            result.add(allButtons.nth(i));
+        }
+        
+        log.info("최종 발견된 재생 버튼 개수: " + result.size());
+        return result;
+    }
 }
