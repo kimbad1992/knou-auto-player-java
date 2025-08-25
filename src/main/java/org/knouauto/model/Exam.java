@@ -1,24 +1,25 @@
 package org.knouauto.model;
 
-import com.microsoft.playwright.ElementHandle;
-import com.microsoft.playwright.Page;
+import org.openqa.selenium.By;
+import org.openqa.selenium.JavascriptExecutor;
+import org.openqa.selenium.WebElement;
 
 import java.util.List;
 
 public class Exam {
     private String id;
-    private ElementHandle examForm;
-    private ElementHandle confirmButton;
-    private List<ElementHandle> answerChoices;
-    private Page page;
+    private WebElement examForm;
+    private WebElement confirmButton;
+    private List<WebElement> answerChoices;
+    private JavascriptExecutor js;
 
     // 생성자
-    public Exam(ElementHandle examForm, Page page) {
+    public Exam(WebElement examForm, JavascriptExecutor js) {
         this.examForm = examForm;
-        this.page = page;
+        this.js = js;
         this.id = examForm.getAttribute("id");
-        this.confirmButton = examForm.querySelector(".confirmAnswer");
-        this.answerChoices = examForm.querySelectorAll(".exam-answer .answerCh");
+        this.confirmButton = examForm.findElement(By.cssSelector(".confirmAnswer"));
+        this.answerChoices = examForm.findElements(By.cssSelector(".exam-answer .answerCh"));
     }
 
     public String getId() {
@@ -27,54 +28,45 @@ public class Exam {
 
     public boolean isDescriptive() {
         // exqsDc 값이 "2"가 아닌 경우 서술형이 아님
-        ElementHandle exqsDc = examForm.querySelector("[name='exqsDc']");
-        return exqsDc != null && "2".equals(exqsDc.getAttribute("value"));
+        return "2".equals(examForm.findElement(By.name("exqsDc")).getAttribute("value"));
     }
 
     public void submitAnswer() {
-        confirmButton.click();
+        js.executeScript("arguments[0].click();", confirmButton);
     }
 
     public void selectAnswer(int index) {
         if (index >= 0 && index < answerChoices.size()) {
-            ElementHandle answerChoice = answerChoices.get(index);
-            answerChoice.click();
+            WebElement answerChoice = answerChoices.get(index);
+            js.executeScript("arguments[0].click();", answerChoice);
         }
-    }
-
-    public List<ElementHandle> getAnswerFields() {
-        return examForm.querySelectorAll("textarea, input[type='text']");
-    }
-
-    public ElementHandle getResultElement() {
-        return examForm.querySelector("input[name='resultCnt']");
     }
 
     public void setId(String id) {
         this.id = id;
     }
 
-    public ElementHandle getExamForm() {
+    public WebElement getExamForm() {
         return examForm;
     }
 
-    public void setExamForm(ElementHandle examForm) {
+    public void setExamForm(WebElement examForm) {
         this.examForm = examForm;
     }
 
-    public ElementHandle getConfirmButton() {
+    public WebElement getConfirmButton() {
         return confirmButton;
     }
 
-    public void setConfirmButton(ElementHandle confirmButton) {
+    public void setConfirmButton(WebElement confirmButton) {
         this.confirmButton = confirmButton;
     }
 
-    public List<ElementHandle> getAnswerChoices() {
+    public List<WebElement> getAnswerChoices() {
         return answerChoices;
     }
 
-    public void setAnswerChoices(List<ElementHandle> answerChoices) {
+    public void setAnswerChoices(List<WebElement> answerChoices) {
         this.answerChoices = answerChoices;
     }
 }

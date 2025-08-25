@@ -25,9 +25,6 @@ dependencies {
 
     // Jackson Databind 특정 버전 추가
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
-
-    // Playwright for java
-    implementation 'com.microsoft.playwright:playwright:1.42.0'
 }
 
 test {

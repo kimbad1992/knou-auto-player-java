@@ -1,7 +1,9 @@
 package org.knouauto.model;
 
-import com.microsoft.playwright.ElementHandle;
-import com.microsoft.playwright.Page;
+import org.openqa.selenium.By;
+import org.openqa.selenium.StaleElementReferenceException;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,7 +12,7 @@ public class Lecture {
     String id;
     String title;
     List<Video> videos = new ArrayList<>();
-    private String lectureElement;  // ElementHandle은 직접 저장할 수 없어 문자열로 변환
+    private WebElement lectureElement;  // WebElement 필드 추가
 
     // 강의 정보를 문자열로 출력하는 메서드
     @Override
@@ -42,12 +44,24 @@ public class Lecture {
         this.videos = videos;
     }
 
-    public ElementHandle getLectureElement(Page page) {
-        // ID를 사용하여 요소를 찾음
-        return page.querySelector("#" + this.id);
+    public WebElement getLectureElement(WebDriver driver) {
+        try {
+            // 요소가 여전히 유효한지 확인
+            lectureElement.isDisplayed();
+        } catch (StaleElementReferenceException e) {
+            // StaleElementReferenceException이 발생하면 새로운 요소를 다시 찾음
+            refreshLectureElement(driver);
+        }
+        return lectureElement;
     }
 
-    public void setLectureElement(String lectureElement) {
+    public void setLectureElement(WebElement lectureElement) {
         this.lectureElement = lectureElement;
     }
+
+    private void refreshLectureElement(WebDriver driver) {
+        // 기존에 저장된 ID를 사용하여 새로운 lectureElement를 찾음
+        this.lectureElement = driver.findElement(By.id(this.id));
+    }
+
 }
