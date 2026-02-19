@@ -403,6 +403,20 @@ public class AutoPlayer {
                 keepPlaying = false;
             }
 
+            // 돌발 퀴즈 확인 및 처리
+            if (handleSurpriseQuiz()) {
+                // 퀴즈 처리 후 영상이 일시정지 상태일 수 있으므로 다시 재생
+                try {
+                    WebElement playButton = driver.findElement(By.cssSelector(PlayerSelector.PLAY.get()));
+                    if(playButton.isDisplayed()) {
+                        playButton.click();
+                        log.info("돌발 퀴즈 처리 후 영상을 다시 재생합니다.");
+                    }
+                } catch (Exception e) {
+                    log.warn("퀴즈 처리 후 재생 버튼을 찾지 못했지만, 계속 진행합니다.");
+                }
+            }
+
             Thread.sleep(500);
         }
 
@@ -541,6 +555,14 @@ public class AutoPlayer {
         } catch (UnhandledAlertException e) {
             // 문제 풀이 메서드에서 Alert을 처리하도록 Throw
             throw e;
+        } catch (NoSuchElementException e) {
+            // #resultCnt를 찾지 못하는 경우는 새로운 유형의 퀴즈로 간주
+            if (e.getMessage().contains("resultCnt")) {
+                log.info("'#resultCnt'를 찾을 수 없습니다. 새로운 유형의 퀴즈로 간주하고 계속합니다.");
+                return true; // 성공으로 간주하고 계속 진행
+            }
+            // 다른 요소 문제일 경우 에러를 다시 던짐
+            throw e;
         } catch (Exception e) {
             log.error("정답 확인 중 에러가 발생했습니다." + e.getMessage());
             return false;
@@ -560,6 +582,89 @@ public class AutoPlayer {
         } catch (Exception ex) {
             log.error("Alert 처리 중 오류가 발생했습니다.");
         }
+    }
+
+    private boolean handleSurpriseQuiz() {
+        boolean isQuizVisible;
+        try {
+            // 현재 iframe 내에서 JavaScript를 실행하여 상위 문서의 퀴즈 모달을 '읽기 전용'으로 확인 (포커스 이동 없음)
+            // '.modal' div에 'active' 클래스가 있는지 확인하는 방식으로 변경
+            isQuizVisible = (boolean) js.executeScript(
+                "var topDoc = window.top.document;" +
+                "var modals = topDoc.querySelectorAll(arguments[0]);" +
+                "var isVisible = false;" +
+                "for (var i = 0; i < modals.length; i++) {" +
+                "    if (modals[i].classList.contains('active')) {" +
+                "        isVisible = true;" +
+                "        break;" +
+                "    }" +
+                "}" +
+                "return isVisible;",
+                PlayerSelector.SURPRISE_QUIZ_MODAL.get()
+            );
+        } catch (Exception e) {
+            log.error("돌발 퀴즈 감지 스크립트 실행 중 오류: " + e.getMessage());
+            return false; // 스크립트 에러시 아무것도 하지 않음
+        }
+
+        // --- 퀴즈가 실제로 보일 때만 아래 로직 실행 ---
+        if (isQuizVisible) {
+            try {
+                // 컨텍스트 전환 (이제 진짜 퀴즈를 풀어야 하므로)
+                driver.switchTo().defaultContent();
+
+                // 보이는 모달 찾기
+                WebElement visibleModal = null;
+                List<WebElement> modals = driver.findElements(By.cssSelector(PlayerSelector.SURPRISE_QUIZ_MODAL.get() + ".active"));
+                for (WebElement modal : modals) {
+                    if (modal.isDisplayed()) {
+                        visibleModal = modal;
+                        break;
+                    }
+                }
+
+
+                if (visibleModal != null) {
+                    log.info("돌발 퀴즈가 나타났습니다.");
+
+                    WebElement quizFormElement = visibleModal.findElement(By.cssSelector(PlayerSelector.SURPRISE_QUIZ_FORM.get()));
+                    Exam quiz = new Exam(quizFormElement, js);
+
+                    // 1. 임의의 보기 선택
+                    if (!quiz.getAnswerChoices().isEmpty()) {
+                        int randomIndex = new Random().nextInt(quiz.getAnswerChoices().size());
+                        quiz.selectAnswer(randomIndex);
+                        log.info("퀴즈의 보기 중 임의의 답변을 선택합니다.");
+                    }
+
+                    // 2. 확인 버튼 클릭
+                    quiz.submitAnswer();
+                    log.info("퀴즈 확인 버튼 클릭");
+
+                    // 3. "학습 계속하기" 버튼 클릭
+                    WebElement closeButton = wait.until(ExpectedConditions.visibilityOf(visibleModal.findElement(By.cssSelector(PlayerSelector.SURPRISE_QUIZ_CLOSE_BUTTON.get()))));
+                    js.executeScript("arguments[0].click();", closeButton);
+                    log.info("퀴즈를 닫고 학습을 계속합니다.");
+
+                    // 퀴즈 창이 완전히 사라질 때까지 대기
+                    wait.until(ExpectedConditions.invisibilityOf(visibleModal));
+                    log.info("퀴즈 창이 닫힌 것을 확인했습니다.");
+                }
+            } catch (Exception e) {
+                log.error("돌발 퀴즈 처리 중 예외 발생: " + e.getMessage());
+            } finally {
+                // 로직이 끝나면 항상 플레이어 프레임으로 복귀
+                try {
+                    switchToPopupWindow();
+                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
+                } catch (Exception e) {
+                    log.error("플레이어 프레임 복귀 중 오류 발생");
+                }
+            }
+            return true;
+        }
+
+        return false; // 퀴즈가 보이지 않으면 아무것도 하지 않고 종료
     }
 
     private List<String> showLectureSelectionPopup(List<WebElement> lectures) {
