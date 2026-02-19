@@ -268,29 +268,80 @@ public class AutoPlayer {
                     continue;
                 }
 
-                String title = lecture.getTitle() + " :: " + video.getTitle();
+    String title = lecture.getTitle() + " :: " + video.getTitle();
+    WebElement targetFrame = null;
 
-                // 비디오 재생
-                try {
-                    if (worker.isCancelled() || Thread.currentThread().isInterrupted()) {
-                        return; // 작업이 취소되었으면 즉시 종료
+    // 비디오 재생
+    try {
+        if (worker.isCancelled() || Thread.currentThread().isInterrupted()) {
+            return; // 작업이 취소되었으면 즉시 종료
+        }
+
+        log.newLine();
+        log.info("재생 시작 :: " + title);
+
+        // 메인 창으로 포커스 전환
+        switchToMainWindow();
+
+        clickViewButton(lecture, video);
+
+        // log.info("비디오 표시 버튼 클릭 완료: " + title);
+
+        // 팝업 창으로 포커스 전환
+        switchToPopupWindow();
+
+        // --- 올바른 영상 프레임 선택 로직 (V3) ---
+        try {
+            // 1. id가 'ifrmVODPlayer_'로 시작하는 모든 iframe을 직접 찾음
+            List<WebElement> playerFrames = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector("iframe[id^='ifrmVODPlayer_']")));
+
+            // 2. 프레임이 여러 개일 경우, 본 영상을 식별
+            if (playerFrames.size() > 1) {
+                log.info(playerFrames.size() + "개의 영상 프레임을 직접 찾았습니다. '오리엔테이션'이 아닌 본 영상을 탐색합니다.");
+                for (WebElement frame : playerFrames) {
+                    try {
+                        // 3. 각 iframe에서 상위로 올라가 'content-box'를 찾고, 그 안의 제목을 확인
+                        WebElement contentBox = frame.findElement(By.xpath("./ancestor::div[contains(@class, 'content-box')]"));
+                        String boxTitle = contentBox.findElement(By.cssSelector(".content-box-title")).getText();
+
+                        // 4. 제목에 '오리엔테이션'이 포함되지 않으면 '본 영상'으로 간주하고 선택
+                        if (!boxTitle.contains("오리엔테이션")) {
+                            targetFrame = frame;
+                            log.info("본 영상 프레임을 찾았습니다: " + frame.getAttribute("id") + " (제목: " + boxTitle + ")");
+                            break;
+                        }
+                    } catch (NoSuchElementException e) {
+                        log.warn("프레임 " + frame.getAttribute("id") + "의 제목을 포함한 컨테이너를 찾지 못했습니다.");
                     }
+                }
 
-                    log.newLine();
-                    log.info("재생 시작 :: " + title);
+                // '오리엔테이션'이 아닌 영상을 명확히 찾지 못했을 경우, 마지막 프레임을 본 영상으로 간주 (fallback)
+                if (targetFrame == null) {
+                    log.warn("'오리엔테이션'이 아닌 영상을 명확히 찾지 못했습니다. 목록의 마지막 프레임을 본 영상으로 간주하고 시도합니다.");
+                    if (!playerFrames.isEmpty()) {
+                        targetFrame = playerFrames.get(playerFrames.size() - 1);
+                    }
+                }
+            }
 
-                    // 메인 창으로 포커스 전환
-                    switchToMainWindow();
+            // 5. 대상 프레임이 없거나(프레임이 하나였던 경우 등), 최종 선택된 프레임으로 설정
+            if (targetFrame == null) {
+                if (!playerFrames.isEmpty()) {
+                    targetFrame = playerFrames.get(0);
+                } else {
+                    // CSS 셀렉터로 못찾았을 경우 ID로 최후 시도
+                    targetFrame = driver.findElement(By.id(PlayerSelector.ROOT.get()));
+                }
+            }
+            
+            // 최종 선택된 프레임으로 전환
+            wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(targetFrame));
 
-                    clickViewButton(lecture, video);
-
-                    // log.info("비디오 표시 버튼 클릭 완료: " + title);
-
-                    // 팝업 창으로 포커스 전환
-                    switchToPopupWindow();
-
-                    // 프레임이 로드될 때까지 대기
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
+        } catch (Exception ex) {
+            log.error("영상 프레임 선택 중 복합적인 오류 발생: " + ex.getMessage() + ". 기존 방식(ifrmVODPlayer_0)으로 복구합니다.");
+            wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id(PlayerSelector.ROOT.get())));
+        }
+        // --- 프레임 선택 로직 종료 ---
                 } catch (UnhandledAlertException e) {
                     String alertMsg = e.getAlertText();
                     handleAlertAccept(e);
@@ -368,7 +419,7 @@ public class AutoPlayer {
                 }
 
                 try {
-                    watchingVideo(title);
+                    watchingVideo(title, targetFrame);
                     endVideo();
                 } catch (InterruptedException e) {
                     log.newLine();
@@ -378,7 +429,7 @@ public class AutoPlayer {
         }
     }
 
-    private void watchingVideo(String title) throws InterruptedException {
+    private void watchingVideo(String title, WebElement currentFrame) throws InterruptedException {
         String totalTime = (String) js.executeScript("return arguments[0].textContent;",
                 driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
         int totalSeconds = stringToSecond(totalTime);
@@ -404,7 +455,7 @@ public class AutoPlayer {
             }
 
             // 돌발 퀴즈 확인 및 처리
-            if (handleSurpriseQuiz()) {
+            if (handleSurpriseQuiz(currentFrame)) {
                 // 퀴즈 처리 후 영상이 일시정지 상태일 수 있으므로 다시 재생
                 try {
                     WebElement playButton = driver.findElement(By.cssSelector(PlayerSelector.PLAY.get()));
@@ -584,7 +635,7 @@ public class AutoPlayer {
         }
     }
 
-    private boolean handleSurpriseQuiz() {
+    private boolean handleSurpriseQuiz(WebElement originalFrame) {
         boolean isQuizVisible;
         try {
             // 현재 iframe 내에서 JavaScript를 실행하여 상위 문서의 퀴즈 모달을 '읽기 전용'으로 확인 (포커스 이동 없음)
@@ -634,21 +685,18 @@ public class AutoPlayer {
                     if (!quiz.getAnswerChoices().isEmpty()) {
                         int randomIndex = new Random().nextInt(quiz.getAnswerChoices().size());
                         quiz.selectAnswer(randomIndex);
-                        log.info("퀴즈의 보기 중 임의의 답변을 선택합니다.");
                     }
 
                     // 2. 확인 버튼 클릭
                     quiz.submitAnswer();
-                    log.info("퀴즈 확인 버튼 클릭");
 
                     // 3. "학습 계속하기" 버튼 클릭
                     WebElement closeButton = wait.until(ExpectedConditions.visibilityOf(visibleModal.findElement(By.cssSelector(PlayerSelector.SURPRISE_QUIZ_CLOSE_BUTTON.get()))));
                     js.executeScript("arguments[0].click();", closeButton);
-                    log.info("퀴즈를 닫고 학습을 계속합니다.");
 
                     // 퀴즈 창이 완전히 사라질 때까지 대기
                     wait.until(ExpectedConditions.invisibilityOf(visibleModal));
-                    log.info("퀴즈 창이 닫힌 것을 확인했습니다.");
+                    log.info("돌발 퀴즈를 완료했습니다.");
                 }
             } catch (Exception e) {
                 log.error("돌발 퀴즈 처리 중 예외 발생: " + e.getMessage());
@@ -656,7 +704,7 @@ public class AutoPlayer {
                 // 로직이 끝나면 항상 플레이어 프레임으로 복귀
                 try {
                     switchToPopupWindow();
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
+                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(originalFrame));
                 } catch (Exception e) {
                     log.error("플레이어 프레임 복귀 중 오류 발생");
                 }
