@@ -337,6 +337,9 @@ public class AutoPlayer {
             // 최종 선택된 프레임으로 전환
             wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(targetFrame));
 
+        } catch (UnhandledAlertException uae) {
+            // 한도 초과 등의 Alert은 바깥 handler에서 처리해야 하므로 re-throw
+            throw uae;
         } catch (Exception ex) {
             log.error("영상 프레임 선택 중 복합적인 오류 발생: " + ex.getMessage() + ". 기존 방식(ifrmVODPlayer_0)으로 복구합니다.");
             wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id(PlayerSelector.ROOT.get())));
