@@ -26,6 +26,18 @@ public class GUI extends JFrame {
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
+        // --- 아이콘 설정 ---
+        try {
+            java.net.URL iconURL = GUI.class.getResource("/icon.png");
+            if (iconURL != null) {
+                setIconImage(new ImageIcon(iconURL).getImage());
+            }
+        } catch (Exception e) {
+            System.err.println("아이콘 로딩 실패: " + e.getMessage());
+            e.printStackTrace();
+        }
+        // --- 아이콘 설정 종료 ---
+
         initComponents();
         addActionListeners();
 
