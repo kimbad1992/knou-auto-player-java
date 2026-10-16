@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.function.Consumer;
 
 public class AutoPlayer {
 
@@ -37,11 +38,22 @@ public class AutoPlayer {
     private String mainWindowHandle;
     private Runnable stopCallback;
     private Runnable loginSuccessCallback;
+    private Runnable loginFailureCallback;
+    private Consumer<List<String>> lectureSelectionCallback;
 
     private final ColorLogger log;
 
     private boolean isPlayingVideo = false;
     private boolean doOverLimit;
+    private boolean skipLecturePopup;
+    private List<String> savedLectures = List.of();
+
+    // 아이디/비밀번호가 틀렸거나 로그인 후 강의실로 이동하지 못한 경우
+    public static class LoginFailedException extends Exception {
+        public LoginFailedException(String message) {
+            super(message);
+        }
+    }
 
     public AutoPlayer(ColorLogger log) {
         this.log = log;
@@ -55,12 +67,29 @@ public class AutoPlayer {
         this.loginSuccessCallback = loginSuccessCallback;
     }
 
-    public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio, boolean overLimit) {
+    // 로그인 실패(아이디/비밀번호 불일치 등) 시 호출
+    public void setLoginFailureCallback(Runnable loginFailureCallback) {
+        this.loginFailureCallback = loginFailureCallback;
+    }
+
+    // 과목 선택 팝업에서 OK로 확정한 과목 제목 목록을 전달
+    public void setLectureSelectionCallback(Consumer<List<String>> lectureSelectionCallback) {
+        this.lectureSelectionCallback = lectureSelectionCallback;
+    }
+
+    /**
+     * @param skipLecturePopup 저장된 과목 선택이 있으면 팝업 없이 바로 시작
+     * @param savedLectures    이전에 선택한 과목 제목 목록 (팝업 기본 체크 상태)
+     */
+    public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio, boolean overLimit,
+                      boolean skipLecturePopup, List<String> savedLectures) {
         worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 try {
                     doOverLimit = overLimit;
+                    AutoPlayer.this.skipLecturePopup = skipLecturePopup;
+                    AutoPlayer.this.savedLectures = savedLectures == null ? List.of() : List.copyOf(savedLectures);
 
                     // WebDriver 초기화 및 옵션 설정
                     initializeDriver(enableHeadless, muteAudio);
@@ -69,10 +98,14 @@ public class AutoPlayer {
                     startLearning(userId, userPassword);
                 } catch (InterruptedException e) {
                     publish("유저 취소: " + e.getMessage());
-                } catch (UnhandledAlertException e) {
-                    if (e.getAlertText().contains("로그인 정보가 올바르지 않습니다.")) {
-                        publish(e.getAlertText());
+                } catch (LoginFailedException e) {
+                    log.error(e.getMessage());
+                    if (loginFailureCallback != null) {
+                        SwingUtilities.invokeLater(loginFailureCallback);
                     }
+                } catch (UnhandledAlertException e) {
+                    String alertText = e.getAlertText();
+                    log.error("알림 발생: " + (alertText == null ? e.getMessage() : alertText));
                 } catch (Exception e) {
                     publish("에러 발생: " + e.getMessage());
                 } finally {
@@ -162,7 +195,25 @@ public class AutoPlayer {
         WebElement passwordElement = driver.findElement(By.id("password_legacy"));
         passwordElement.sendKeys(userPassword);
         passwordElement.sendKeys(Keys.RETURN);
-        wait.until(ExpectedConditions.urlToBe(STUDY_URL));
+
+        // 로그인 실패는 알림 문구와 무관하게 LoginFailedException으로 통일
+        try {
+            wait.until(ExpectedConditions.urlToBe(STUDY_URL));
+        } catch (UnhandledAlertException e) {
+            String alertText = e.getAlertText();
+            handleAlertAccept(e);
+            throw new LoginFailedException("로그인 실패: " + (alertText == null ? "알림이 발생했습니다." : alertText));
+        } catch (TimeoutException e) {
+            String currentUrl;
+            try {
+                currentUrl = driver.getCurrentUrl();
+            } catch (UnhandledAlertException alertException) {
+                String alertText = alertException.getAlertText();
+                handleAlertAccept(alertException);
+                throw new LoginFailedException("로그인 실패: " + (alertText == null ? "알림이 발생했습니다." : alertText));
+            }
+            throw new LoginFailedException("로그인 실패: 로그인 후 강의실 페이지로 이동하지 않았습니다. (현재 URL: " + currentUrl + ")");
+        }
     }
 
     // 강의 로딩 메서드
@@ -179,8 +230,8 @@ public class AutoPlayer {
             // 강의 목록을 가져오기
             List<WebElement> lectures = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector(LectureSelector.ROOT.get())));
 
-            // 강의 타이틀을 기준으로 체크박스를 팝업에서 선택받기
-            List<String> excludedLectures = showLectureSelectionPopup(lectures);
+            // 수강할 과목 결정: 저장된 선택으로 바로 시작하거나 팝업에서 선택받기
+            List<String> selectedLectures = resolveLectureSelection(lectures);
 
             for (WebElement lectureElement : lectures) {
                 Lecture lecture = new Lecture();
@@ -188,7 +239,7 @@ public class AutoPlayer {
                 lecture.setTitle(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText());
                 lecture.setLectureElement(lectureElement);  // WebElement 저장
 
-                if (!excludedLectures.contains(lecture.getTitle().trim())) {
+                if (!selectedLectures.contains(lecture.getTitle().trim())) {
                     log.info(lecture.getTitle() + "강의를 스킵합니다.");
                     continue;
                 }
@@ -262,10 +313,43 @@ public class AutoPlayer {
             log.newLine();
 
         } catch (Exception e) {
-            log.error("강의 로딩 중 에러 발생.");
+            log.error("강의 로딩 중 에러 발생: " + e.getMessage());
         }
 
         return lectureList;
+    }
+
+    // 팝업 생략 옵션이 켜져 있고 저장된 선택이 현재 과목 목록과 하나라도 맞으면 팝업 없이 진행
+    private List<String> resolveLectureSelection(List<WebElement> lectures) throws Exception {
+        List<String> lectureTitles = new ArrayList<>();
+        for (WebElement lectureElement : lectures) {
+            lectureTitles.add(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText().trim());
+        }
+
+        if (skipLecturePopup && !savedLectures.isEmpty()) {
+            List<String> matched = new ArrayList<>();
+            for (String saved : savedLectures) {
+                if (lectureTitles.contains(saved)) {
+                    matched.add(saved);
+                }
+            }
+            if (!matched.isEmpty()) {
+                log.info("저장된 과목 선택으로 바로 시작합니다. (" + matched.size() + "개: " + String.join(", ", matched) + ")");
+                return matched;
+            }
+            log.warn("저장된 과목 선택이 현재 강의 목록과 맞지 않아 과목 선택 팝업을 띄웁니다.");
+        }
+
+        List<String> selected = showLectureSelectionPopup(lectureTitles, savedLectures);
+        if (selected != null) {
+            if (lectureSelectionCallback != null) {
+                List<String> confirmed = List.copyOf(selected);
+                SwingUtilities.invokeLater(() -> lectureSelectionCallback.accept(confirmed));
+            }
+            return selected;
+        }
+        log.warn("과목 선택을 취소해 모든 과목을 건너뜁니다.");
+        return List.of();
     }
 
 
@@ -735,13 +819,12 @@ public class AutoPlayer {
         return false; // 퀴즈가 보이지 않으면 아무것도 하지 않고 종료
     }
 
-    private List<String> showLectureSelectionPopup(List<WebElement> lectures) throws Exception {
-        // 강의 제목만 먼저 수집 (백그라운드 스레드에서 DOM 접근)
-        List<String> lectureTitles = new ArrayList<>();
-        for (WebElement lectureElement : lectures) {
-            lectureTitles.add(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText());
-        }
-
+    /**
+     * 과목 선택 팝업. 저장된 선택(defaultSelected)에 있는 과목은 기본 체크 상태로 띄운다.
+     *
+     * @return OK로 확정한 과목 제목 목록, 취소하면 null
+     */
+    private List<String> showLectureSelectionPopup(List<String> lectureTitles, List<String> defaultSelected) throws Exception {
         // Swing UI(JOptionPane)는 반드시 EDT에서: invokeAndWait + FutureTask로 결과 회수
         java.util.concurrent.FutureTask<List<String>> task = new java.util.concurrent.FutureTask<>(() -> {
             List<JCheckBox> checkBoxes = new ArrayList<>();
@@ -756,6 +839,7 @@ public class AutoPlayer {
             JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
             for (String title : lectureTitles) {
                 JCheckBox checkBox = new JCheckBox(title);
+                checkBox.setSelected(defaultSelected.contains(title));
                 checkBoxes.add(checkBox);
                 checkBoxPanel.add(checkBox);
             }
@@ -774,12 +858,13 @@ public class AutoPlayer {
 
             int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
 
+            if (result != JOptionPane.OK_OPTION) {
+                return null;
+            }
             List<String> selected = new ArrayList<>();
-            if (result == JOptionPane.OK_OPTION) {
-                for (JCheckBox checkBox : checkBoxes) {
-                    if (checkBox.isSelected()) {
-                        selected.add(checkBox.getText());
-                    }
+            for (JCheckBox checkBox : checkBoxes) {
+                if (checkBox.isSelected()) {
+                    selected.add(checkBox.getText().trim());
                 }
             }
             return selected;
