@@ -1,0 +1,67 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon (M1 이후)
+            arch: arm64
+          - runner: macos-15-intel  # Intel Mac
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build dmg
+        run: ./gradlew packageMac --no-daemon
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: knou-auto-player-macos-${{ matrix.arch }}
+          path: build/jpackage/dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # jpackage --type msi 는 WiX Toolset 3.x(candle.exe, light.exe)가 PATH에 있어야 함
+      # 러너 이미지에 기본 설치돼 있지만, 없으면 설치
+      - name: Ensure WiX Toolset 3.x
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset --version 3.14.1 -y --no-progress
+            "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          }
+          (Get-Command candle.exe).Source
+
+      - name: Build msi
+        run: ./gradlew packageWindows --no-daemon
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: knou-auto-player-windows-x64
+          path: build/jpackage/dist/*.msi
+          if-no-files-found: error
