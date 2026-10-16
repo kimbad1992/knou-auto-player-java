@@ -8,6 +8,9 @@ public class Video {
     private boolean waiting;
     private boolean watched;
     private boolean exercise;
+    // 강의 목록의 "N분 / M분" (지금까지 학습한 분 / 영상 길이 분). 못 읽었으면 -1
+    private int studiedMinutes = -1;
+    private int lengthMinutes = -1;
 
     // 비디오 정보를 문자열로 출력하는 메서드
     @Override
@@ -62,5 +65,23 @@ public class Video {
 
     public void setExercise(boolean exercise) {
         this.exercise = exercise;
+    }
+
+    public int getStudiedMinutes() {
+        return studiedMinutes;
+    }
+
+    public int getLengthMinutes() {
+        return lengthMinutes;
+    }
+
+    public void setProgress(int studiedMinutes, int lengthMinutes) {
+        this.studiedMinutes = studiedMinutes;
+        this.lengthMinutes = lengthMinutes;
+    }
+
+    // 강의 목록에서 학습 시간을 읽었는지
+    public boolean hasProgress() {
+        return studiedMinutes >= 0 && lengthMinutes > 0;
     }
 }

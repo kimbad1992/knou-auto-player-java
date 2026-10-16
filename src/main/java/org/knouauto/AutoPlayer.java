@@ -22,6 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class AutoPlayer {
 
@@ -41,6 +43,10 @@ public class AutoPlayer {
     // 영상이 멈춰 있으면 이 간격으로 다시 재생을 시도하고, 이만큼 계속 안 되면 그 영상은 실패로 처리
     public static final long STALL_RESUME_SEC = 5L;
     public static final long STALL_GIVE_UP_SEC = 180L;
+    // 강의 목록의 "39분 / 66분" (지금까지 학습한 분 / 영상 길이 분)
+    private static final Pattern PROGRESS_PATTERN = Pattern.compile("(\\d+)\\s*분\\s*/\\s*(\\d+)\\s*분");
+    // 목록의 분은 내림이라 기준에 살짝 못 미칠 수 있어, 목록 기준으로 남은 시간을 볼 때는 이만큼 더 듣는다
+    public static final long PROGRESS_MARGIN_SEC = 60L;
 
     private WebDriver driver;
     private WebDriverWait wait;
@@ -291,6 +297,10 @@ public class AutoPlayer {
                     // 펼치는 중이라 아직 안 보이면 getText()가 빈 문자열이므로 textContent로도 읽는다
                     String videoTitle = textOf(videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_TITLE.get())));
                     video.setTitle(videoTitle.isEmpty() ? "영상 " + (lecture.getVideos().size() + 1) : videoTitle);
+                    Matcher progress = PROGRESS_PATTERN.matcher(textOf(videoElement));
+                    if (progress.find()) {
+                        video.setProgress(Integer.parseInt(progress.group(1)), Integer.parseInt(progress.group(2)));
+                    }
 
                     // 대기 중인 비디오인지 확인
                     boolean isWaiting = false;
@@ -414,6 +424,15 @@ public class AutoPlayer {
 
                 String title = lecture.getTitle() + " :: " + video.getTitle();
                 String label = lecture.getTitle() + " · " + video.getTitle();
+
+                // 목록상 이미 기준보다 1분 넘게 더 들었는데도 수강완료가 아니면 기준이 더 높은 과목이라 60%로는 끝나지 않는다
+                if (video.hasProgress()
+                        && video.getStudiedMinutes() >= video.getLengthMinutes() * VIDEO_ELAPSE_PERCENT / 100.0 + 1) {
+                    log.info("· " + label + " · 이미 " + video.getStudiedMinutes() + "분 / " + video.getLengthMinutes()
+                            + "분 학습했지만 수강완료가 아니라 건너뜁니다. (기준이 " + VIDEO_ELAPSE_PERCENT + "%보다 높은 과목으로 보임)");
+                    continue;
+                }
+
                 long videoStartedAt = System.currentTimeMillis();
                 List<WebElement> playerFrames;
 
@@ -561,6 +580,8 @@ public class AutoPlayer {
         int watched = 0;
         // 연습 문제를 통과하지 못한 경우에만, 첫 플레이어 재생을 시작한 뒤 한 번 푼다
         boolean exerciseDone = video.isExercise();
+        // 목록의 학습 시간은 강의 하나 단위라 플레이어가 하나일 때만 이어서 센다 (여러 개면 플레이어마다 60%를 새로 채움)
+        long alreadySeconds = count == 1 && video.hasProgress() ? video.getStudiedMinutes() * 60L : -1;
 
         for (int i = 0; i < count; i++) {
             WebElement frame = playerFrames.get(i);
@@ -589,7 +610,7 @@ public class AutoPlayer {
             }
 
             String playerTitle = player == null ? title : title + " (" + player + ")";
-            String failure = watchingVideo(playerTitle, frame);
+            String failure = watchingVideo(playerTitle, frame, alreadySeconds);
             if (failure != null) {
                 log.error("× " + label + (player == null ? "" : " · " + player) + " · " + failure);
                 return 0;
@@ -703,11 +724,16 @@ public class AutoPlayer {
      * 사이트는 재생 위치가 아니라 '재생 중이었던 시간'을 진도로 쌓는다. 이어보기로 뒤에서 시작해도 그만큼은 쳐 주지 않으므로
      * 같은 방식으로 재생 중인 시간만 센다. 멈춰 있으면 다시 재생하고, 끝까지 갔는데 모자라면 처음부터 다시 본다.
      *
+     * @param alreadySeconds 강의 목록에 나온 지금까지의 학습 시간(초). 이만큼은 이미 들은 것으로 치고 남은 만큼만 재생한다.
+     *                       모르면 -1 (이번 실행에서 60%를 새로 채움)
      * @return 실패 사유. 기준까지 봤으면 null
      */
-    private String watchingVideo(String title, WebElement currentFrame) throws InterruptedException {
+    private String watchingVideo(String title, WebElement currentFrame, long alreadySeconds) throws InterruptedException {
         isPlayingVideo = true;
         long startedAt = System.currentTimeMillis();
+        boolean fromList = alreadySeconds >= 0;
+        long alreadyMillis = fromList ? alreadySeconds * 1000 : 0;
+        boolean remainingLogged = false;
         long playedMillis = 0;
         long lastPlayingAt = 0;        // 직전 확인 때 재생 중이었으면 그 시각
         long stoppedSince = startedAt; // 재생 중이 아니게 된 시각 (재생 중이면 0)
@@ -751,9 +777,18 @@ public class AutoPlayer {
             }
 
             if (state.duration() > 0) {
-                double percent = playedMillis / 10.0 / state.duration();
-                log.progress(title, formatClock(playedMillis / 1000), formatClock((long) state.duration()), percent);
-                if (percent >= VIDEO_ELAPSE_PERCENT) {
+                // 기준 = 영상 길이의 60% (목록 기준으로 이어서 셀 때는 여유분을 더함)
+                long targetMillis = (long) (state.duration() * 10 * VIDEO_ELAPSE_PERCENT)
+                        + (fromList ? Duration.ofSeconds(PROGRESS_MARGIN_SEC).toMillis() : 0);
+                if (fromList && !remainingLogged) {
+                    long remainingMinutes = (long) Math.ceil(Math.max(0, targetMillis - alreadyMillis) / 60000.0);
+                    log.info("    지금까지 " + alreadySeconds / 60 + "분 학습 · 기준까지 " + remainingMinutes + "분 더 재생");
+                    remainingLogged = true;
+                }
+                long studiedMillis = alreadyMillis + playedMillis;
+                double percent = studiedMillis / 10.0 / state.duration();
+                log.progress(title, formatClock(studiedMillis / 1000), formatClock((long) state.duration()), percent);
+                if (studiedMillis >= targetMillis) {
                     // 학습 종료(endVideo)까지는 재생 중으로 둔다
                     return null;
                 }
