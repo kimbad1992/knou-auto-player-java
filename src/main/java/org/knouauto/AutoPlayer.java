@@ -48,6 +48,13 @@ public class AutoPlayer {
     private boolean skipLecturePopup;
     private List<String> savedLectures = List.of();
 
+    // 이번 실행 요약용
+    private int watchedThisRun = 0;
+    private int failedThisRun = 0;
+    private boolean limitHit = false;
+    private String stopReason;   // null이면 정상 종료
+    private long runStartedAt;
+
     // 아이디/비밀번호가 틀렸거나 로그인 후 강의실로 이동하지 못한 경우
     public static class LoginFailedException extends Exception {
         public LoginFailedException(String message) {
@@ -87,6 +94,11 @@ public class AutoPlayer {
             @Override
             protected Void doInBackground() {
                 try {
+                    watchedThisRun = 0;
+                    failedThisRun = 0;
+                    limitHit = false;
+                    stopReason = null;
+                    runStartedAt = System.currentTimeMillis();
                     doOverLimit = overLimit;
                     AutoPlayer.this.skipLecturePopup = skipLecturePopup;
                     AutoPlayer.this.savedLectures = savedLectures == null ? List.of() : List.copyOf(savedLectures);
@@ -98,20 +110,27 @@ public class AutoPlayer {
                     // 로그인 및 강의 실행
                     startLearning(userId, userPassword);
                 } catch (InterruptedException e) {
-                    publish("유저 취소: " + e.getMessage());
+                    stopReason = "중지했습니다";
                 } catch (LoginFailedException e) {
                     log.error(e.getMessage());
+                    stopReason = "로그인하지 못해 종료했습니다";
                     if (loginFailureCallback != null) {
                         SwingUtilities.invokeLater(loginFailureCallback);
                     }
                 } catch (UnhandledAlertException e) {
                     String alertText = e.getAlertText();
-                    log.error("알림 발생: " + (alertText == null ? e.getMessage() : alertText));
+                    log.error("사이트 알림: " + (alertText == null ? e.getMessage() : alertText));
+                    stopReason = "오류로 종료했습니다";
                 } catch (Exception e) {
-                    publish("에러 발생: " + e.getMessage());
+                    if (isCancelled()) {
+                        stopReason = "중지했습니다";
+                    } else {
+                        log.error("오류: " + e.getMessage());
+                        stopReason = "오류로 종료했습니다";
+                    }
                 } finally {
                     cleanup();
-                    publish("중지했습니다.");
+                    logRunSummary(isCancelled());
 
                     // 버튼 상태를 초기화하는 작업을 finally 블록에서 수행
                     if (stopCallback != null) {
@@ -149,9 +168,8 @@ public class AutoPlayer {
     // 로그인 및 강의 실행
     private void startLearning(String userId, String userPassword) throws Exception {
         log.status("로그인 중");
-        log.info("로그인 중...");
         login(userId, userPassword);
-        log.info("로그인 성공, 강의 로딩 ...");
+        log.info("로그인 완료");
         if (loginSuccessCallback != null) {
             SwingUtilities.invokeLater(loginSuccessCallback);
         }
@@ -164,7 +182,7 @@ public class AutoPlayer {
             try {
                 endVideo(); // 비디오 재생 중이면 종료 처리
             } catch (Exception e) {
-                log.error("Cleanup 중 강의 종료 실패: " + e.getMessage());
+                log.warn("종료하면서 학습 종료 처리를 하지 못했습니다: " + e.getMessage());
             }
         }
 
@@ -227,7 +245,6 @@ public class AutoPlayer {
 
         try {
             log.status("강의 목록 불러오는 중");
-            log.info("강의 로딩 중...");
 
             // 강의 목록을 가져오기
             List<WebElement> lectures = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector(LectureSelector.ROOT.get())));
@@ -242,11 +259,9 @@ public class AutoPlayer {
                 lecture.setLectureElement(lectureElement);  // WebElement 저장
 
                 if (!selectedLectures.contains(lecture.getTitle().trim())) {
-                    log.info(lecture.getTitle() + "강의를 스킵합니다.");
                     continue;
                 }
 
-                log.info(lecture.toString());
 
                 // 강의를 펼치는 코드 추가 (JavaScript 사용)
                 expandLecture(lecture);
@@ -301,18 +316,25 @@ public class AutoPlayer {
                     }
 
                     lecture.getVideos().add(video);
-                    log.info(video.toString());
                 }
                 lectureList.add(lecture);
+
+                // 과목별 한 줄 요약
+                long remaining = lecture.getVideos().stream().filter(v -> !v.isWaiting() && !v.isWatched()).count();
+                long waiting = lecture.getVideos().stream().filter(Video::isWaiting).count();
+                String line = lecture.getTitle() + " · 영상 " + lecture.getVideos().size() + "개 중 " + remaining + "개 남음";
+                if (waiting > 0) {
+                    line += " (대기 " + waiting + "개)";
+                }
+                log.info(line);
             }
 
-            // 전체 로깅 메시지를 출력
-            log.success(lectures.size() + " lectures, " + totalVideos + " videos loaded");
-            log.info("   ├ ✔ watched: " + watchedVideoCount);
-            log.info("   ├ ◻ waiting: " + waitingVideoCount);
-            log.info("   └ ✖ not watched: " + notWatchedVideoCount);
+            if (lectureList.size() > 1) {
+                log.info("볼 영상 총 " + notWatchedVideoCount + "개");
+            }
         } catch (Exception e) {
-            log.error("강의 로딩 중 에러 발생: " + e.getMessage());
+            log.error("강의 목록을 불러오지 못했습니다: " + e.getMessage());
+            stopReason = "오류로 종료했습니다";
         }
 
         return lectureList;
@@ -333,10 +355,10 @@ public class AutoPlayer {
                 }
             }
             if (!matched.isEmpty()) {
-                log.info("저장된 과목 선택으로 바로 시작합니다. (" + matched.size() + "개: " + String.join(", ", matched) + ")");
+                log.info("과목 선택 (저장된 선택): " + String.join(", ", matched));
                 return matched;
             }
-            log.warn("저장된 과목 선택이 현재 강의 목록과 맞지 않아 과목 선택 팝업을 띄웁니다.");
+            log.warn("저장된 과목이 목록에 없어 다시 선택합니다.");
         }
 
         List<String> selected = showLectureSelectionPopup(lectureTitles, savedLectures);
@@ -345,9 +367,16 @@ public class AutoPlayer {
                 List<String> confirmed = List.copyOf(selected);
                 SwingUtilities.invokeLater(() -> lectureSelectionCallback.accept(confirmed));
             }
+            if (selected.isEmpty()) {
+                log.warn("선택한 과목이 없습니다.");
+                stopReason = "선택한 과목이 없어 종료했습니다";
+            } else {
+                log.info("과목 선택: " + String.join(", ", selected));
+            }
             return selected;
         }
-        log.warn("과목 선택을 취소해 모든 과목을 건너뜁니다.");
+        log.info("과목 선택을 취소했습니다.");
+        stopReason = "과목 선택을 취소해 종료했습니다";
         return List.of();
     }
 
@@ -364,11 +393,12 @@ public class AutoPlayer {
                 }
 
                 if (video.isWaiting() || video.isWatched()) {
-                    log.info("시청 생략(강의 대기 혹은 시청 완료) : " + video.toString());
                     continue;
                 }
 
     String title = lecture.getTitle() + " :: " + video.getTitle();
+    String label = lecture.getTitle() + " · " + video.getTitle();
+    long videoStartedAt = System.currentTimeMillis();
     WebElement targetFrame = null;
 
     // 비디오 재생
@@ -377,8 +407,8 @@ public class AutoPlayer {
             return; // 작업이 취소되었으면 즉시 종료
         }
 
-        log.status("재생 준비 중 · " + title.replace(" :: ", " · "));
-        log.info("재생 시작 :: " + title);
+        log.status("재생 준비 중 · " + label);
+        log.info("▶ " + label);
 
         // 메인 창으로 포커스 전환
         switchToMainWindow();
@@ -397,7 +427,6 @@ public class AutoPlayer {
 
             // 2. 프레임이 여러 개일 경우, 본 영상을 식별
             if (playerFrames.size() > 1) {
-                log.info(playerFrames.size() + "개의 영상 프레임을 직접 찾았습니다. '오리엔테이션'이 아닌 본 영상을 탐색합니다.");
                 for (WebElement frame : playerFrames) {
                     try {
                         // 3. 각 iframe에서 상위로 올라가 'content-box'를 찾고, 그 안의 제목을 확인
@@ -407,17 +436,14 @@ public class AutoPlayer {
                         // 4. 제목에 '오리엔테이션'이 포함되지 않으면 '본 영상'으로 간주하고 선택
                         if (!boxTitle.contains("오리엔테이션")) {
                             targetFrame = frame;
-                            log.info("본 영상 프레임을 찾았습니다: " + frame.getAttribute("id") + " (제목: " + boxTitle + ")");
                             break;
                         }
                     } catch (NoSuchElementException e) {
-                        log.warn("프레임 " + frame.getAttribute("id") + "의 제목을 포함한 컨테이너를 찾지 못했습니다.");
                     }
                 }
 
                 // '오리엔테이션'이 아닌 영상을 명확히 찾지 못했을 경우, 마지막 프레임을 본 영상으로 간주 (fallback)
                 if (targetFrame == null) {
-                    log.warn("'오리엔테이션'이 아닌 영상을 명확히 찾지 못했습니다. 목록의 마지막 프레임을 본 영상으로 간주하고 시도합니다.");
                     if (!playerFrames.isEmpty()) {
                         targetFrame = playerFrames.get(playerFrames.size() - 1);
                     }
@@ -441,7 +467,7 @@ public class AutoPlayer {
             // 한도 초과 등의 Alert은 바깥 handler에서 처리해야 하므로 re-throw
             throw uae;
         } catch (Exception ex) {
-            log.error("영상 프레임 선택 중 복합적인 오류 발생: " + ex.getMessage() + ". 기존 방식(ifrmVODPlayer_0)으로 복구합니다.");
+            log.warn("영상 화면을 찾지 못해 기본 화면으로 다시 시도합니다.");
             wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id(PlayerSelector.ROOT.get())));
         }
         // --- 프레임 선택 로직 종료 ---
@@ -451,49 +477,50 @@ public class AutoPlayer {
 
                     if (alertMsg.contains("초과")) {
                         // 일일 수강 한도 초과
-                        log.warn("일일 수강 한도에 도달했습니다.");
-
+                        limitHit = true;
                         if (doOverLimit) {
+                            log.warn("일일 수강 한도에 도달해 다음 과목으로 넘어갑니다.");
                             break videoLoop;
                         } else {
+                            log.warn("일일 수강 한도에 도달했습니다.");
                             break lectureLoop;
                         }
                     } else if (alertMsg.contains("진도율")) {
                         // 진도율 체크되지 않음
-                        log.warn("진도율이 체크 되지 않고 있습니다.");
+                        log.warn("진도율이 체크되지 않고 있다는 알림이 떴습니다.");
                     }
                 } catch (Exception e) {
-                    log.error("비디오 재생 실패: " + video.getTitle() + " (" + e.getMessage() + ")");
+                    log.error("× " + label + " · 열지 못했습니다: " + e.getMessage());
+                    failedThisRun++;
+                    continue;
                 }
 
                 try {
                     Thread.sleep(Duration.ofSeconds(1L));
                 } catch (InterruptedException e) {
-                    log.error("대기 중 취소.");
+                    return;
                 }
 
                 // 비디오 재생 버튼 클릭
                 try {
                     WebElement playButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.PLAY.get())));
                     playButton.click();
-                    // log.info("비디오 재생 버튼 클릭 완료: " + title);
                 } catch (Exception e) {
-                    log.error("비디오 재생 버튼을 찾지 못했습니다.");
+                    log.error("× " + label + " · 재생 버튼을 찾지 못했습니다.");
+                    failedThisRun++;
                     continue;
                 }
 
                 try {
                     WebElement continueButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.WATCH_CONTINUE.get())));
                     continueButton.click();
-                    log.info("이어서 보기 클릭 완료: " + title);
                 } catch (NoSuchElementException | TimeoutException e) {
-                    // 이어서 보기 버튼이 없거나 대기 실패의 경우 Pass
+                    // 이어서 보기 버튼이 없으면 처음부터 재생
                 }
 
-                // 연습 문제를 통과하지 못한 경우
+                // 연습 문제를 통과하지 못한 경우에만 풀이
                 if (!video.isExercise()) {
-                    log.status("연습 문제 확인 중 · " + title.replace(" :: ", " · "));
-                    log.info("연습 문제를 확인합니다.");
+                    log.status("연습 문제 확인 중 · " + label);
                     // 연습문제 요소를 찾기 위한 컨텍스트 전환
                     driver.switchTo().defaultContent();
 
@@ -506,25 +533,29 @@ public class AutoPlayer {
                             solveExam(exam);  // 각 문제를 해결
                         }
 
-                        log.success(title + "의 문제 풀이를 완료했습니다.");
+                        log.info("    연습문제 제출 · " + examForms.size() + "문항");
                     } catch (TimeoutException te) {
-                        log.info("연습 문제가 없습니다.");
+                        // 연습 문제가 없는 영상
                     } catch (Exception e) {
-                        log.error("연습문제 확인 중 오류 발생: " + e.getMessage());
+                        log.error("    연습문제를 처리하지 못했습니다: " + e.getMessage());
                     }
 
                     // 연습 문제 처리 후 다시 플레이어 프레임으로 전환
                     switchToPopupWindow();
                     wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
-                } else {
-                    log.info("기존에 연습 문제를 통과한 이력이 있습니다.");
                 }
 
                 try {
                     watchingVideo(title, targetFrame);
-                    endVideo();
+                    boolean ended = endVideo();
+                    watchedThisRun++;
+                    String done = "✓ " + label + " · " + formatDuration(System.currentTimeMillis() - videoStartedAt);
+                    if (!ended) {
+                        done += " (학습 종료 처리는 실패)";
+                    }
+                    log.success(done);
                 } catch (InterruptedException e) {
-                    log.warn("유저 취소로 인한 중단");
+                    return;
                 }
             }
         }
@@ -535,7 +566,6 @@ public class AutoPlayer {
                 driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
         int totalSeconds = stringToSecond(totalTime);
 
-        log.info("총 재생 시간: " + totalTime);
 
         boolean keepPlaying = true;
         int elapsedSeconds = 0;
@@ -562,10 +592,9 @@ public class AutoPlayer {
                     WebElement playButton = driver.findElement(By.cssSelector(PlayerSelector.PLAY.get()));
                     if(playButton.isDisplayed()) {
                         playButton.click();
-                        log.info("돌발 퀴즈 처리 후 영상을 다시 재생합니다.");
                     }
                 } catch (Exception e) {
-                    log.warn("퀴즈 처리 후 재생 버튼을 찾지 못했지만, 계속 진행합니다.");
+                    // 재생 버튼이 없으면 그대로 진행
                 }
             }
 
@@ -574,10 +603,10 @@ public class AutoPlayer {
 
         isPlayingVideo = false;
 
-        log.info("강의 시청 완료: " + title);
     }
 
-    private void endVideo() {
+    // 사이트에 학습 종료를 알린다. 성공하면 true.
+    private boolean endVideo() {
         try {
             // Cleanup시 endVideo 중복호출 되지 않도록
             isPlayingVideo = false;
@@ -588,13 +617,59 @@ public class AutoPlayer {
 
             Alert alert = wait.until(ExpectedConditions.alertIsPresent());
             alert.accept();
-
-            log.info("학습 종료 완료");
+            return true;
         } catch (TimeoutException e) {
-            log.error("학습 종료 알림을 찾을 수 없습니다: " + e.getMessage());
+            log.warn("학습 종료 확인 창이 뜨지 않았습니다.");
         } catch (Exception e) {
-            log.error("플레이어 종료 중 에러 발생 : " + e.getMessage());
+            log.warn("학습 종료 처리를 하지 못했습니다: " + e.getMessage());
         }
+        return false;
+    }
+
+    // 실행이 끝날 때 한 줄 요약
+    private void logRunSummary(boolean cancelled) {
+        String reason;
+        if (cancelled) {
+            reason = "중지했습니다";
+        } else if (stopReason != null) {
+            reason = stopReason;
+        } else if (limitHit) {
+            reason = "일일 수강 한도에 도달해 종료했습니다";
+        } else if (watchedThisRun == 0 && failedThisRun == 0) {
+            reason = "볼 영상이 없어 종료했습니다";
+        } else {
+            reason = "선택한 과목의 영상을 모두 시청했습니다";
+        }
+
+        StringBuilder summary = new StringBuilder(reason);
+        if (watchedThisRun > 0 || failedThisRun > 0) {
+            summary.append(" · 시청 ").append(watchedThisRun).append("개");
+            if (failedThisRun > 0) {
+                summary.append(", 실패 ").append(failedThisRun).append("개");
+            }
+            summary.append(" · ").append(formatDuration(System.currentTimeMillis() - runStartedAt));
+        }
+
+        boolean finishedAll = !cancelled && stopReason == null && !limitHit && watchedThisRun > 0 && failedThisRun == 0;
+        if (finishedAll) {
+            log.success(summary.toString());
+        } else {
+            log.info(summary.toString());
+        }
+    }
+
+    private static String formatDuration(long millis) {
+        long totalSeconds = Math.max(0, millis / 1000);
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return hours + "시간 " + minutes + "분";
+        }
+        if (minutes > 0) {
+            return minutes + "분";
+        }
+        return seconds + "초";
     }
 
     private int stringToSecond(String time) {
@@ -655,7 +730,7 @@ public class AutoPlayer {
 //                log.warn("최대 시도 횟수를 초과했습니다. 다음 문제로 넘어갑니다.");
 //            }
         } catch (Exception e) {
-            log.error("연습문제 풀이 도중 오류 발생: " + e.getMessage());
+            log.error("    연습문제 풀이 중 오류: " + e.getMessage());
         }
     }
 
@@ -673,7 +748,7 @@ public class AutoPlayer {
             handleAlertAccept(e);
             return false;
         } catch (Exception e) {
-            log.error("서술형 문제 처리 중 에러가 발생했습니다.");
+            log.error("    서술형 문제를 처리하지 못했습니다.");
             return false;
         }
     }
@@ -691,7 +766,7 @@ public class AutoPlayer {
             handleAlertAccept(e);
             return false;
         } catch (Exception e) {
-            log.error("객관식 문제 처리 중 에러가 발생했습니다." + e.getMessage());
+            log.error("    객관식 문제를 처리하지 못했습니다: " + e.getMessage());
             return false;
         }
     }
@@ -709,13 +784,12 @@ public class AutoPlayer {
         } catch (NoSuchElementException e) {
             // #resultCnt를 찾지 못하는 경우는 새로운 유형의 퀴즈로 간주
             if (e.getMessage().contains("resultCnt")) {
-                log.info("'#resultCnt'를 찾을 수 없습니다. 새로운 유형의 퀴즈로 간주하고 계속합니다.");
-                return true; // 성공으로 간주하고 계속 진행
+                return true; // 결과 필드가 없는 새 유형의 문제는 통과로 간주
             }
             // 다른 요소 문제일 경우 에러를 다시 던짐
             throw e;
         } catch (Exception e) {
-            log.error("정답 확인 중 에러가 발생했습니다." + e.getMessage());
+            log.error("    정답을 확인하지 못했습니다: " + e.getMessage());
             return false;
         }
     }
@@ -731,7 +805,7 @@ public class AutoPlayer {
             // log.warn("Alert 대기 시간 초과: 알림이 존재하지 않습니다.");
             // 이미 처리된 Alert이므로 PASS
         } catch (Exception ex) {
-            log.error("Alert 처리 중 오류가 발생했습니다.");
+            log.warn("알림 창을 닫지 못했습니다.");
         }
     }
 
@@ -754,8 +828,7 @@ public class AutoPlayer {
                 PlayerSelector.SURPRISE_QUIZ_MODAL.get()
             );
         } catch (Exception e) {
-            log.error("돌발 퀴즈 감지 스크립트 실행 중 오류: " + e.getMessage());
-            return false; // 스크립트 에러시 아무것도 하지 않음
+            return false; // 감지에 실패하면 이번 주기는 건너뜀 (0.5초마다 재시도)
         }
 
         // --- 퀴즈가 실제로 보일 때만 아래 로직 실행 ---
@@ -776,7 +849,6 @@ public class AutoPlayer {
 
 
                 if (visibleModal != null) {
-                    log.info("돌발 퀴즈가 나타났습니다.");
 
                     WebElement quizFormElement = visibleModal.findElement(By.cssSelector(PlayerSelector.SURPRISE_QUIZ_FORM.get()));
                     Exam quiz = new Exam(quizFormElement, js);
@@ -796,17 +868,17 @@ public class AutoPlayer {
 
                     // 퀴즈 창이 완전히 사라질 때까지 대기
                     wait.until(ExpectedConditions.invisibilityOf(visibleModal));
-                    log.info("돌발 퀴즈를 완료했습니다.");
+                    log.info("    돌발 퀴즈 응답");
                 }
             } catch (Exception e) {
-                log.error("돌발 퀴즈 처리 중 예외 발생: " + e.getMessage());
+                log.error("    돌발 퀴즈를 처리하지 못했습니다: " + e.getMessage());
             } finally {
                 // 로직이 끝나면 항상 플레이어 프레임으로 복귀
                 try {
                     switchToPopupWindow();
                     wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(originalFrame));
                 } catch (Exception e) {
-                    log.error("플레이어 프레임 복귀 중 오류 발생");
+                    log.warn("영상 화면으로 돌아가지 못했습니다.");
                 }
             }
             return true;
@@ -952,7 +1024,7 @@ public class AutoPlayer {
             try {
                 js.executeScript("arguments[0].click();", expandButton);
             } catch (Exception e) {
-                log.error("강의 펼침 도중 오류 발생: " + lecture.getTitle());
+                log.error("과목을 펼치지 못했습니다: " + lecture.getTitle());
             }
         }
     }
