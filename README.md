@@ -87,7 +87,8 @@ xattr -dr com.apple.quarantine "/Applications/KNOU Auto Player.app"
 
 - jpackage는 크로스 빌드가 안 되므로 설치 파일은 각 OS에서 빌드합니다.
 - Windows `.msi` 빌드에는 [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases)가 필요합니다.
-- GitHub Actions의 `Build Release` 워크플로를 수동 실행하거나 `v*` 태그를 push하면 Windows(x64) `.msi`, macOS(arm64/x64) `.dmg`가 Artifacts로 올라옵니다.
+- GitHub Actions의 `Build Release` 워크플로를 수동 실행하면 Windows(x64) `.msi`, macOS(arm64/x64) `.dmg`가 Artifacts로 올라옵니다.
+- `v*` 태그를 push하면 같은 파일이 `KNOUAuto-x.x.x*` 이름으로 draft 릴리즈에 첨부됩니다. 릴리즈 노트를 작성한 뒤 공개하면 됩니다.
 
 ## 글꼴
 
