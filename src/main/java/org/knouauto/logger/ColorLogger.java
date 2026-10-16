@@ -35,11 +35,12 @@ public class ColorLogger {
         this.logTextPane = logTextPane;
         this.doc = logTextPane.getStyledDocument();
 
-        Font mono = UIManager.getFont("monospaced.font");
-        if (mono == null) {
-            mono = new Font(Font.MONOSPACED, Font.PLAIN, 12);
+        // 로그도 본문과 같은 글꼴을 쓴다. (macOS의 Menlo는 Java에서 영문 글자가 빠지는 문제가 있음)
+        Font base = UIManager.getFont("Label.font");
+        if (base == null) {
+            base = new Font(Font.SANS_SERIF, Font.PLAIN, 13);
         }
-        logTextPane.setFont(mono.deriveFont(12f));
+        logTextPane.setFont(base.deriveFont(Font.PLAIN, 12.5f));
 
         // 캐럿이 스크롤을 끌고 다니지 않도록 하고, 자동 스크롤은 직접 처리
         if (logTextPane.getCaret() instanceof DefaultCaret caret) {
@@ -60,7 +61,22 @@ public class ColorLogger {
     }
 
     public void error(String message) {
-        append(message, ERROR_COLOR);
+        append(brief(message), ERROR_COLOR);
+    }
+
+    // Selenium 예외 메시지는 여러 줄에 세션 정보까지 붙으므로 첫 줄만, 길면 잘라서 보여준다. 전체는 stderr로.
+    private static String brief(String message) {
+        if (message == null) {
+            return "";
+        }
+        String firstLine = message.strip().split("\\R", 2)[0].strip();
+        if (firstLine.length() > 160) {
+            firstLine = firstLine.substring(0, 157) + "...";
+        }
+        if (!firstLine.equals(message.strip())) {
+            System.err.println(message);
+        }
+        return firstLine;
     }
 
     public void success(String message) {

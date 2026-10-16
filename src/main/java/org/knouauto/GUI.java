@@ -316,12 +316,12 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         // 사용자가 직접 체크를 해제하면 저장된 자동 로그인 정보를 바로 삭제
         autoLoginCheckBox.addActionListener(e -> {
             if (autoLoginCheckBox.isSelected()) {
-                log.info("로그인에 성공하면 아이디/비밀번호를 저장하고, 다음 실행 시 자동으로 시작합니다.");
+                log.info("자동 로그인: 로그인에 성공하면 아이디와 비밀번호를 저장합니다.");
                 return;
             }
             try {
                 autoLoginStore.clear();
-                log.info("저장된 자동 로그인 정보를 삭제했습니다.");
+                log.info("자동 로그인 정보를 삭제했습니다.");
             } catch (Exception ex) {
                 log.error("자동 로그인 정보 삭제 실패: " + ex.getMessage());
             }
@@ -558,11 +558,11 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         try {
             passwordField.setText(autoLoginStore.loadPassword(settings.userId()));
         } catch (Exception e) {
-            log.error("저장된 비밀번호를 불러오지 못해 자동 로그인을 건너뜁니다: " + e.getMessage());
+            log.error("저장된 비밀번호를 불러오지 못했습니다: " + e.getMessage());
             return;
         }
 
-        log.info("자동 로그인 정보로 시작합니다. 멈추려면 중지를 누르세요.");
+        log.info("저장된 정보로 자동 시작합니다.");
         startedByAutoLogin = true;
         SwingUtilities.invokeLater(() -> {
             if (startButton.isEnabled()) {
@@ -585,9 +585,8 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     private void saveSelectedLectures(List<String> titles) {
         try {
             autoLoginStore.saveSelectedLectures(titles);
-            log.info("선택한 과목을 기억했습니다. (" + titles.size() + "개)");
         } catch (Exception e) {
-            log.error("과목 선택 저장 실패: " + e.getMessage());
+            log.error("과목 선택을 저장하지 못했습니다: " + e.getMessage());
         }
     }
 
