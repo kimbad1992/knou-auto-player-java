@@ -43,3 +43,37 @@ shadowJar {
         attributes 'Main-Class': 'org.knouauto.GUI'
     }
 }
+
+// macOS용 .dmg 빌드 (jpackage는 크로스 빌드가 안 되므로 macOS에서만 실행 가능)
+def jpackageInputDir = layout.buildDirectory.dir('jpackage/input')
+def jpackageOutputDir = layout.buildDirectory.dir('jpackage/dist')
+
+// jpackage는 --input 폴더의 모든 jar를 앱에 포함하므로 fat jar 하나만 복사
+tasks.register('prepareJpackageInput', Sync) {
+    from shadowJar
+    into jpackageInputDir
+}
+
+tasks.register('packageMac', Exec) {
+    group = 'distribution'
+    description = 'macOS용 .dmg 파일을 생성합니다. (macOS에서만 실행 가능)'
+    dependsOn 'prepareJpackageInput'
+
+    doFirst {
+        if (!System.getProperty('os.name').toLowerCase().contains('mac')) {
+            throw new GradleException('packageMac은 macOS에서만 실행할 수 있습니다.')
+        }
+        project.delete(jpackageOutputDir)
+    }
+
+    executable "${System.getProperty('java.home')}/bin/jpackage"
+    args '--type', 'dmg',
+            '--name', 'KNOU Auto Player',
+            '--app-version', shadowJar.archiveVersion.get(),
+            '--input', jpackageInputDir.get().asFile.path,
+            '--main-jar', shadowJar.archiveFileName.get(),
+            '--main-class', 'org.knouauto.GUI',
+            '--icon', file('packaging/macos/icon.icns').path,
+            '--mac-package-identifier', 'org.knouauto.player',
+            '--dest', jpackageOutputDir.get().asFile.path
+}

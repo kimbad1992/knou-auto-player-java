@@ -14,6 +14,7 @@ Release로는 Launch4J로 Executable을 만들어 배포함
 - 수강 과목 선택 추가
 - 연습문제 풀이 추가 (정답 여부와 상관 없이 랜덤한 선택지를 찍도록 작동)
 - 자동 로그인 추가 (아래 참고)
+- macOS 빌드 추가 (아래 참고)
 
 ### 자동 로그인
 
@@ -22,6 +23,23 @@ Release로는 Launch4J로 Executable을 만들어 배포함
 - 비밀번호는 OS 자격 증명 저장소에 저장됩니다. (Windows: 자격 증명 관리자, macOS: 키체인)
 - 체크를 해제하면 저장된 정보가 바로 삭제됩니다.
 - macOS에서는 처음 실행할 때 키체인 접근 허용 창이 뜰 수 있습니다. `항상 허용`을 누르면 됩니다.
+
+### macOS
+
+macOS용 `.dmg`는 Java 런타임이 포함되어 있어 JDK 설치 없이 실행됩니다. (Chrome은 설치되어 있어야 함)
+
+__빌드__
+- GitHub Actions의 `Build macOS` 워크플로를 수동 실행하거나 `v*` 태그를 push하면 Apple Silicon(arm64) / Intel(x64)용 `.dmg`가 Artifacts로 올라옵니다.
+- Mac에서 직접 빌드: `./gradlew packageMac` → `build/jpackage/dist/`
+
+__실행__
+
+서명되지 않은 앱이라 처음 실행 시 "확인되지 않은 개발자" 경고로 열리지 않습니다.
+`시스템 설정 > 개인정보 보호 및 보안`에서 `그래도 열기`를 누르거나, 터미널에서 아래 명령을 실행하세요.
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/KNOU Auto Player.app"
+```
 
 ### Required
 

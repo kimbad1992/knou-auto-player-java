@@ -1,0 +1,38 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon (M1 이후)
+            arch: arm64
+          - runner: macos-15-intel  # Intel Mac
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build dmg
+        run: |
+          chmod +x ./gradlew
+          ./gradlew packageMac --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knou-auto-player-macos-${{ matrix.arch }}
+          path: build/jpackage/dist/*.dmg
+          if-no-files-found: error
