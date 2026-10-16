@@ -41,7 +41,7 @@ test {
 shadowJar {
     archiveBaseName.set('knou-auto-player')
     archiveClassifier.set('fat')
-    archiveVersion.set('1.0.7')
+    archiveVersion.set('1.0.8')
     manifest {
         attributes 'Main-Class': 'org.knouauto.GUI'
     }
