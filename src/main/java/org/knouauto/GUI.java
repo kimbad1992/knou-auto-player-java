@@ -32,9 +32,11 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     private static final String KEY_WINDOW_WIDTH = "windowWidth";
     private static final String KEY_WINDOW_HEIGHT = "windowHeight";
 
-    private static final int MARGIN = 14;
+    // 8px 그리드
+    private static final int MARGIN = 16;
+    private static final int SECTION_GAP = 20;
     private static final int LOG_PREFERRED_HEIGHT = 240;
-    private static final int LOG_MINIMUM_HEIGHT = 110;
+    private static final int LOG_MINIMUM_HEIGHT = 120;
     private static final int EXIT_WAIT_MILLIS = 15_000;
 
     private JTextField userIdField;
@@ -81,7 +83,10 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         restoreWindowBounds(packed);
 
         updateStartButtonState();
-        loadAutoLogin();
+        // 화면만 확인할 때: java -Dknou.skipAutoLogin=true -jar ...
+        if (!Boolean.getBoolean("knou.skipAutoLogin")) {
+            loadAutoLogin();
+        }
     }
 
     private void loadIcon() {
@@ -98,7 +103,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     // ---------------------------------------------------------------- 레이아웃
 
     private JPanel buildContent() {
-        JPanel content = new JPanel(new BorderLayout(0, 10));
+        JPanel content = new JPanel(new BorderLayout(0, SECTION_GAP));
         content.setBorder(BorderFactory.createEmptyBorder(MARGIN, MARGIN, MARGIN, MARGIN));
         content.add(buildTopPanel(), BorderLayout.NORTH);
         content.add(buildLogPanel(), BorderLayout.CENTER);
@@ -106,7 +111,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         return content;
     }
 
-    // 아이디/비밀번호 + 옵션 두 묶음
+    // 아이디/비밀번호 폼 + 옵션 두 묶음(두 열)
     private JPanel buildTopPanel() {
         userIdField = new JTextField(20);
         passwordField = new JPasswordField(20);
@@ -126,19 +131,19 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         c.gridy = 0;
         c.gridx = 0;
         c.anchor = GridBagConstraints.EAST;
-        c.insets = new Insets(0, 0, 6, 8);
+        c.insets = new Insets(0, 0, 8, 10);
         form.add(new JLabel("아이디"), c);
         c.gridx = 1;
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
-        c.insets = new Insets(0, 0, 6, 0);
+        c.insets = new Insets(0, 0, 8, 0);
         form.add(userIdField, c);
 
         c.gridy = 1;
         c.gridx = 0;
         c.weightx = 0;
         c.fill = GridBagConstraints.NONE;
-        c.insets = new Insets(0, 0, 0, 8);
+        c.insets = new Insets(0, 0, 0, 10);
         form.add(new JLabel("비밀번호"), c);
         c.gridx = 1;
         c.weightx = 1;
@@ -146,44 +151,48 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         c.insets = new Insets(0, 0, 0, 0);
         form.add(passwordField, c);
 
+        JPanel options = new JPanel(new GridLayout(1, 2, 24, 0));
+        options.add(optionGroup("실행 방식", headlessCheckBox, muteAudioCheckBox));
+        options.add(optionGroup("동작", overLimitCheckBox, autoLoginCheckBox, skipLecturePopupCheckBox));
+
         JPanel top = new JPanel();
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
         form.setAlignmentX(LEFT_ALIGNMENT);
+        options.setAlignmentX(LEFT_ALIGNMENT);
         top.add(form);
-        top.add(Box.createVerticalStrut(12));
-        top.add(optionGroup("실행 방식", headlessCheckBox, muteAudioCheckBox));
-        top.add(Box.createVerticalStrut(8));
-        top.add(optionGroup("동작", overLimitCheckBox, autoLoginCheckBox, skipLecturePopupCheckBox));
+        top.add(Box.createVerticalStrut(SECTION_GAP));
+        top.add(options);
         return top;
     }
 
-    // 작은 회색 제목 아래 체크박스를 한 줄로
+    // 세미볼드 제목 아래 체크박스를 세로로
     private JPanel optionGroup(String title, JCheckBox... boxes) {
         JPanel group = new JPanel();
         group.setLayout(new BoxLayout(group, BoxLayout.Y_AXIS));
-        group.setAlignmentX(LEFT_ALIGNMENT);
 
         JLabel heading = sectionLabel(title);
         heading.setAlignmentX(LEFT_ALIGNMENT);
         group.add(heading);
-        group.add(Box.createVerticalStrut(2));
-
-        Box row = Box.createHorizontalBox();
-        row.setAlignmentX(LEFT_ALIGNMENT);
+        group.add(Box.createVerticalStrut(6));
         for (int i = 0; i < boxes.length; i++) {
             if (i > 0) {
-                row.add(Box.createHorizontalStrut(12));
+                group.add(Box.createVerticalStrut(2));
             }
-            row.add(boxes[i]);
+            boxes[i].setAlignmentX(LEFT_ALIGNMENT);
+            group.add(boxes[i]);
         }
-        row.add(Box.createHorizontalGlue());
-        group.add(row);
+        group.add(Box.createVerticalGlue());
         return group;
     }
 
     private JLabel sectionLabel(String text) {
         JLabel label = new JLabel(text);
-        label.setFont(label.getFont().deriveFont(label.getFont().getSize2D() - 1f));
+        label.putClientProperty("FlatLaf.styleClass", "semibold");
+        return label;
+    }
+
+    private JLabel secondaryLabel(String text) {
+        JLabel label = new JLabel(text);
         Color secondary = UIManager.getColor("Label.disabledForeground");
         if (secondary != null) {
             label.setForeground(secondary);
@@ -195,6 +204,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     private JPanel buildLogPanel() {
         logTextPane = new JTextPane();
         logTextPane.setEditable(false);
+        logTextPane.setMargin(new Insets(8, 10, 8, 10));
         // 읽기 전용이어도 입력란처럼 흰 배경을 유지
         Color textBackground = UIManager.getColor("TextPane.background");
         if (textBackground != null) {
@@ -215,12 +225,12 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         header.add(sectionLabel("로그"));
         header.add(Box.createHorizontalGlue());
         header.add(copyButton);
-        header.add(Box.createHorizontalStrut(2));
+        header.add(Box.createHorizontalStrut(4));
         header.add(saveButton);
-        header.add(Box.createHorizontalStrut(2));
+        header.add(Box.createHorizontalStrut(4));
         header.add(clearButton);
 
-        JPanel panel = new JPanel(new BorderLayout(0, 2));
+        JPanel panel = new JPanel(new BorderLayout(0, 6));
         panel.add(header, BorderLayout.NORTH);
         panel.add(scrollPane, BorderLayout.CENTER);
         return panel;
@@ -231,17 +241,19 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         button.setToolTipText(tooltip);
         button.setFocusable(false);
         button.putClientProperty("JButton.buttonType", "toolBarButton");
-        button.setFont(button.getFont().deriveFont(button.getFont().getSize2D() - 1f));
+        Color secondary = UIManager.getColor("Label.disabledForeground");
+        if (secondary != null) {
+            button.setForeground(secondary);
+        }
         return button;
     }
 
     // 상태 텍스트 + 가는 진행 바, 오른쪽에 시작/중지 버튼
     private JPanel buildBottomPanel() {
-        statusLabel = new JLabel(STATUS_IDLE);
+        statusLabel = secondaryLabel(STATUS_IDLE);
         progressBar = new JProgressBar(0, 100);
-        progressBar.setPreferredSize(new Dimension(0, 6));
         startButton = new JButton("시작");
-        startButton.putClientProperty("JComponent.minimumWidth", 100);
+        startButton.putClientProperty("JComponent.minimumWidth", 96);
 
         JPanel bottom = new JPanel(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
@@ -250,7 +262,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         c.weightx = 1;
         c.anchor = GridBagConstraints.SOUTHWEST;
         c.fill = GridBagConstraints.HORIZONTAL;
-        c.insets = new Insets(0, 0, 6, 0);
+        c.insets = new Insets(0, 0, 8, 0);
         bottom.add(statusLabel, c);
 
         c.gridy = 1;
@@ -264,7 +276,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         c.weightx = 0;
         c.fill = GridBagConstraints.NONE;
         c.anchor = GridBagConstraints.EAST;
-        c.insets = new Insets(0, 16, 0, 0);
+        c.insets = new Insets(0, 24, 0, 0);
         bottom.add(startButton, c);
         return bottom;
     }
@@ -371,6 +383,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     private void onStopped() {
         setRunning(false);
         statusLabel.setText(STATUS_IDLE);
+        statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
         progressBar.setIndeterminate(false);
         progressBar.setValue(0);
         updateStartButtonState();
@@ -382,6 +395,8 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     private void setRunning(boolean running) {
         this.running = running;
         startButton.setText(running ? "중지" : "시작");
+        // 실행 중에는 Enter로 중지되지 않도록 기본 버튼 해제
+        getRootPane().setDefaultButton(running ? null : startButton);
         // 실행 중에는 시작 시점의 아이디/비밀번호가 쓰이므로 입력란만 잠근다
         userIdField.setEnabled(!running);
         passwordField.setEnabled(!running);
@@ -397,6 +412,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
     }
 
     private void showBusy(String text) {
+        statusLabel.setForeground(UIManager.getColor("Label.foreground"));
         statusLabel.setText(text);
         progressBar.setIndeterminate(true);
     }
@@ -415,6 +431,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
             return;
         }
         int value = (int) Math.max(0, Math.min(100, Math.round(percent)));
+        statusLabel.setForeground(UIManager.getColor("Label.foreground"));
         statusLabel.setText(title.replace(" :: ", " · ") + " · " + value + "% · " + elapsedTime + " / " + totalTime);
         progressBar.setIndeterminate(false);
         progressBar.setValue(value);
@@ -597,6 +614,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         }
         try {
             if (FlatLightLaf.setup()) {
+                applyUiTweaks();
                 return;
             }
         } catch (Throwable e) {
@@ -607,6 +625,33 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         } catch (Exception e) {
             System.err.println("시스템 룩앤필 적용 실패: " + e.getMessage());
         }
+    }
+
+    // 입력란 모서리를 버튼과 맞추고, 기본 버튼은 강조색으로 채운다 (강조색은 시스템 또는 FlatLaf 기본 파랑 하나)
+    private static void applyUiTweaks() {
+        UIManager.put("TextComponent.arc", 6);
+        UIManager.put("Component.arrowType", "chevron");
+
+        Color accent = UIManager.getColor("Component.accentColor");
+        if (accent == null) {
+            return;
+        }
+        UIManager.put("Button.default.background", accent);
+        UIManager.put("Button.default.foreground", Color.WHITE);
+        UIManager.put("Button.default.hoverBackground", shade(accent, 0.08f));
+        UIManager.put("Button.default.pressedBackground", shade(accent, 0.16f));
+        UIManager.put("Button.default.focusedBackground", accent);
+        UIManager.put("Button.default.borderColor", accent);
+        UIManager.put("Button.default.hoverBorderColor", shade(accent, 0.08f));
+        UIManager.put("Button.default.focusedBorderColor", accent);
+        UIManager.put("Button.default.boldText", false);
+    }
+
+    private static Color shade(Color color, float amount) {
+        return new Color(
+                Math.round(color.getRed() * (1 - amount)),
+                Math.round(color.getGreen() * (1 - amount)),
+                Math.round(color.getBlue() * (1 - amount)));
     }
 
     public static void main(String[] args) {
