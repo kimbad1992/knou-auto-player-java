@@ -141,8 +141,17 @@ public class AutoPlayer {
 
     private void login(String userId, String userPassword) throws Exception {
         driver.get(LOGIN_URL);
-        driver.findElement(By.name("username")).sendKeys(userId);
-        WebElement passwordElement = driver.findElement(By.name("password"));
+
+        // 로그인 페이지 개편(2026-10): name=username 은 hidden 필드가 되었고,
+        // 신규 '아이디' 탭은 2차 인증 팝업이 뜰 수 있으므로 (구)로그인 탭으로 로그인한다.
+        WebElement legacyRadio = driver.findElement(By.cssSelector("input[name='user_type'][value='LEGACY']"));
+        if (!legacyRadio.isSelected()) {
+            js.executeScript("arguments[0].click();", legacyRadio);
+        }
+
+        WebElement idElement = wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("username_legacy")));
+        idElement.sendKeys(userId);
+        WebElement passwordElement = driver.findElement(By.id("password_legacy"));
         passwordElement.sendKeys(userPassword);
         passwordElement.sendKeys(Keys.RETURN);
         wait.until(ExpectedConditions.urlToBe(STUDY_URL));
