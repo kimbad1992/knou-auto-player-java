@@ -75,6 +75,9 @@ __직접 환경 변수 수정__
 > ![](https://i.imgur.com/oknSW7r.png)
 
 
+### 글꼴
+- UI 글꼴은 [Pretendard](https://github.com/orioncactus/pretendard) (SIL Open Font License)를 jar에 포함해 사용합니다. 라이선스는 `src/main/resources/fonts/LICENSE-Pretendard.txt`.
+
 ### 원본 프로젝트
 - **원본 프로젝트:** [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-player)
 - **원작자:** [이근혁(Aiden Lee)](https://www.linkedin.com/in/dev-ghlee)

@@ -614,6 +614,7 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         }
         try {
             if (FlatLightLaf.setup()) {
+                applyFonts();
                 applyUiTweaks();
                 return;
             }
@@ -624,6 +625,35 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
             System.err.println("시스템 룩앤필 적용 실패: " + e.getMessage());
+        }
+    }
+
+    // 번들한 Pretendard를 기본 글꼴로. Windows/macOS에서 같은 글꼴로 보이게 한다. 실패하면 FlatLaf 기본 글꼴 유지.
+    private static void applyFonts() {
+        Font regular = loadFont("/fonts/Pretendard-Regular.otf");
+        Font semibold = loadFont("/fonts/Pretendard-SemiBold.otf");
+        if (regular == null) {
+            return;
+        }
+        float size = 13f;
+        UIManager.put("defaultFont", regular.deriveFont(size));
+        if (semibold != null) {
+            UIManager.put("semibold.font", semibold.deriveFont(size));
+            UIManager.put("h4.font", semibold.deriveFont(size));
+        }
+    }
+
+    private static Font loadFont(String resource) {
+        try (java.io.InputStream in = GUI.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                return null;
+            }
+            Font font = Font.createFont(Font.TRUETYPE_FONT, in);
+            GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(font);
+            return font;
+        } catch (Exception e) {
+            System.err.println("글꼴 로딩 실패 (" + resource + "): " + e.getMessage());
+            return null;
         }
     }
 
