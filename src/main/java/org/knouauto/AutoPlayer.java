@@ -16,9 +16,14 @@ import javax.swing.*;
 import java.awt.*;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class AutoPlayer {
 
@@ -28,8 +33,20 @@ public class AutoPlayer {
     public static String[] HEADLESS_OPTIONS = {"--headless", "window-size=800x600", "disable-gpu"};
     public static String[] MUTE_OPTIONS = {"--mute-audio"};
 
+    // 영상 길이 대비 실제로 재생한 시간이 이 비율이 되면 완료로 본다 (재생 위치가 아님)
     public static final int VIDEO_ELAPSE_PERCENT = 60;
     public static final long DRIVER_WAIT_SEC = 5L;
+    // 과목을 펼친 뒤 강의 보기 버튼이 보일 때까지 (목록을 늦게 불러오는 과목이 있음)
+    public static final long VIEW_BUTTON_WAIT_SEC = 15L;
+    // 플레이어가 영상 길이를 읽을 때까지. 넘기면 그 영상은 실패로 처리
+    public static final long DURATION_WAIT_SEC = 30L;
+    // 영상이 멈춰 있으면 이 간격으로 다시 재생을 시도하고, 이만큼 계속 안 되면 그 영상은 실패로 처리
+    public static final long STALL_RESUME_SEC = 5L;
+    public static final long STALL_GIVE_UP_SEC = 180L;
+    // 강의 목록의 "39분 / 66분" (지금까지 학습한 분 / 영상 길이 분)
+    private static final Pattern PROGRESS_PATTERN = Pattern.compile("(\\d+)\\s*분\\s*/\\s*(\\d+)\\s*분");
+    // 목록의 분은 내림이라 기준에 살짝 못 미칠 수 있어, 목록 기준으로 남은 시간을 볼 때는 이만큼 더 듣는다
+    public static final long PROGRESS_MARGIN_SEC = 60L;
 
     private WebDriver driver;
     private WebDriverWait wait;
@@ -47,6 +64,8 @@ public class AutoPlayer {
     private boolean doOverLimit;
     private boolean skipLecturePopup;
     private List<String> savedLectures = List.of();
+    // 과목 id -> 마지막으로 펼치기를 누른 시각. 펼치는 중에 다시 누르면 접히므로 기록해 둔다
+    private final Map<String, Long> expandClickedAt = new HashMap<>();
 
     // 이번 실행 요약용
     private int watchedThisRun = 0;
@@ -98,6 +117,7 @@ public class AutoPlayer {
                     failedThisRun = 0;
                     limitHit = false;
                     stopReason = null;
+                    expandClickedAt.clear();
                     runStartedAt = System.currentTimeMillis();
                     doOverLimit = overLimit;
                     AutoPlayer.this.skipLecturePopup = skipLecturePopup;
@@ -274,7 +294,13 @@ public class AutoPlayer {
 
                     Video video = new Video();
                     video.setId(videoElement.getAttribute("id"));
-                    video.setTitle(videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_TITLE.get())).getText());
+                    // 펼치는 중이라 아직 안 보이면 getText()가 빈 문자열이므로 textContent로도 읽는다
+                    String videoTitle = textOf(videoElement.findElement(By.cssSelector(LectureSelector.VIDEO_TITLE.get())));
+                    video.setTitle(videoTitle.isEmpty() ? "영상 " + (lecture.getVideos().size() + 1) : videoTitle);
+                    Matcher progress = PROGRESS_PATTERN.matcher(textOf(videoElement));
+                    if (progress.find()) {
+                        video.setProgress(Integer.parseInt(progress.group(1)), Integer.parseInt(progress.group(2)));
+                    }
 
                     // 대기 중인 비디오인지 확인
                     boolean isWaiting = false;
@@ -396,83 +422,42 @@ public class AutoPlayer {
                     continue;
                 }
 
-    String title = lecture.getTitle() + " :: " + video.getTitle();
-    String label = lecture.getTitle() + " · " + video.getTitle();
-    long videoStartedAt = System.currentTimeMillis();
-    WebElement targetFrame = null;
+                String title = lecture.getTitle() + " :: " + video.getTitle();
+                String label = lecture.getTitle() + " · " + video.getTitle();
 
-    // 비디오 재생
-    try {
-        if (worker.isCancelled() || Thread.currentThread().isInterrupted()) {
-            return; // 작업이 취소되었으면 즉시 종료
-        }
+                // 목록상 이미 기준보다 1분 넘게 더 들었는데도 수강완료가 아니면 기준이 더 높은 과목이라 60%로는 끝나지 않는다
+                if (video.hasProgress()
+                        && video.getStudiedMinutes() >= video.getLengthMinutes() * VIDEO_ELAPSE_PERCENT / 100.0 + 1) {
+                    log.info("· " + label + " · 이미 " + video.getStudiedMinutes() + "분 / " + video.getLengthMinutes()
+                            + "분 학습했지만 수강완료가 아니라 건너뜁니다. (기준이 " + VIDEO_ELAPSE_PERCENT + "%보다 높은 과목으로 보임)");
+                    continue;
+                }
 
-        log.status("재생 준비 중 · " + label);
-        log.info("▶ " + label);
+                long videoStartedAt = System.currentTimeMillis();
+                List<WebElement> playerFrames;
 
-        // 메인 창으로 포커스 전환
-        switchToMainWindow();
-
-        clickViewButton(lecture, video);
-
-        // log.info("비디오 표시 버튼 클릭 완료: " + title);
-
-        // 팝업 창으로 포커스 전환
-        switchToPopupWindow();
-
-        // --- 올바른 영상 프레임 선택 로직 (V3) ---
-        try {
-            // 1. id가 'ifrmVODPlayer_'로 시작하는 모든 iframe을 직접 찾음
-            List<WebElement> playerFrames = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector("iframe[id^='ifrmVODPlayer_']")));
-
-            // 2. 프레임이 여러 개일 경우, 본 영상을 식별
-            if (playerFrames.size() > 1) {
-                for (WebElement frame : playerFrames) {
-                    try {
-                        // 3. 각 iframe에서 상위로 올라가 'content-box'를 찾고, 그 안의 제목을 확인
-                        WebElement contentBox = frame.findElement(By.xpath("./ancestor::div[contains(@class, 'content-box')]"));
-                        String boxTitle = contentBox.findElement(By.cssSelector(".content-box-title")).getText();
-
-                        // 4. 제목에 '오리엔테이션'이 포함되지 않으면 '본 영상'으로 간주하고 선택
-                        if (!boxTitle.contains("오리엔테이션")) {
-                            targetFrame = frame;
-                            break;
-                        }
-                    } catch (NoSuchElementException e) {
+                // 강의 보기 → 재생 창 → 볼 플레이어 찾기
+                try {
+                    if (worker.isCancelled() || Thread.currentThread().isInterrupted()) {
+                        return; // 작업이 취소되었으면 즉시 종료
                     }
-                }
 
-                // '오리엔테이션'이 아닌 영상을 명확히 찾지 못했을 경우, 마지막 프레임을 본 영상으로 간주 (fallback)
-                if (targetFrame == null) {
-                    if (!playerFrames.isEmpty()) {
-                        targetFrame = playerFrames.get(playerFrames.size() - 1);
-                    }
-                }
-            }
+                    log.status("재생 준비 중 · " + label);
+                    log.info("▶ " + label);
 
-            // 5. 대상 프레임이 없거나(프레임이 하나였던 경우 등), 최종 선택된 프레임으로 설정
-            if (targetFrame == null) {
-                if (!playerFrames.isEmpty()) {
-                    targetFrame = playerFrames.get(0);
-                } else {
-                    // CSS 셀렉터로 못찾았을 경우 ID로 최후 시도
-                    targetFrame = driver.findElement(By.id(PlayerSelector.ROOT.get()));
-                }
-            }
-            
-            // 최종 선택된 프레임으로 전환
-            wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(targetFrame));
+                    // 메인 창으로 포커스 전환
+                    switchToMainWindow();
 
-        } catch (UnhandledAlertException uae) {
-            // 한도 초과 등의 Alert은 바깥 handler에서 처리해야 하므로 re-throw
-            throw uae;
-        } catch (Exception ex) {
-            log.warn("영상 화면을 찾지 못해 기본 화면으로 다시 시도합니다.");
-            wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.id(PlayerSelector.ROOT.get())));
-        }
-        // --- 프레임 선택 로직 종료 ---
+                    clickViewButton(lecture, video);
+
+                    // 팝업 창으로 포커스 전환
+                    switchToPopupWindow();
+
+                    playerFrames = findPlayerFrames();
+                    // 한도 초과 같은 알림은 이 단계에서 드러나므로 첫 플레이어에 한 번 들어가 본다
+                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(playerFrames.get(0)));
                 } catch (UnhandledAlertException e) {
-                    String alertMsg = e.getAlertText();
+                    String alertMsg = Objects.toString(e.getAlertText(), "");
                     handleAlertAccept(e);
 
                     if (alertMsg.contains("초과")) {
@@ -489,6 +474,18 @@ public class AutoPlayer {
                         // 진도율 체크되지 않음
                         log.warn("진도율이 체크되지 않고 있다는 알림이 떴습니다.");
                     }
+
+                    // 알림을 닫았으니 플레이어를 다시 찾아 이어서 진행
+                    try {
+                        switchToPopupWindow();
+                        playerFrames = findPlayerFrames();
+                    } catch (Exception ex) {
+                        log.error("× " + label + " · 열지 못했습니다: " + ex.getMessage());
+                        failedThisRun++;
+                        continue;
+                    }
+                } catch (InterruptedException e) {
+                    return;
                 } catch (Exception e) {
                     log.error("× " + label + " · 열지 못했습니다: " + e.getMessage());
                     failedThisRun++;
@@ -496,57 +493,11 @@ public class AutoPlayer {
                 }
 
                 try {
-                    Thread.sleep(Duration.ofSeconds(1L));
-                } catch (InterruptedException e) {
-                    return;
-                }
-
-                // 비디오 재생 버튼 클릭
-                try {
-                    WebElement playButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.PLAY.get())));
-                    playButton.click();
-                } catch (Exception e) {
-                    log.error("× " + label + " · 재생 버튼을 찾지 못했습니다.");
-                    failedThisRun++;
-                    continue;
-                }
-
-                try {
-                    WebElement continueButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.WATCH_CONTINUE.get())));
-                    continueButton.click();
-                } catch (NoSuchElementException | TimeoutException e) {
-                    // 이어서 보기 버튼이 없으면 처음부터 재생
-                }
-
-                // 연습 문제를 통과하지 못한 경우에만 풀이
-                if (!video.isExercise()) {
-                    log.status("연습 문제 확인 중 · " + label);
-                    // 연습문제 요소를 찾기 위한 컨텍스트 전환
-                    driver.switchTo().defaultContent();
-
-                    try {
-                        wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("form[id^='frm_']")));
-                        List<WebElement> examForms = driver.findElements(By.cssSelector("form[id^='frm_']"));
-
-                        for (WebElement examForm : examForms) {
-                            Exam exam = new Exam(examForm, js);
-                            solveExam(exam);  // 각 문제를 해결
-                        }
-
-                        log.info("    연습문제 제출 · " + examForms.size() + "문항");
-                    } catch (TimeoutException te) {
-                        // 연습 문제가 없는 영상
-                    } catch (Exception e) {
-                        log.error("    연습문제를 처리하지 못했습니다: " + e.getMessage());
+                    if (playAllPlayers(video, title, label, playerFrames) == 0) {
+                        failedThisRun++;
+                        closeFailedPopup();
+                        continue;
                     }
-
-                    // 연습 문제 처리 후 다시 플레이어 프레임으로 전환
-                    switchToPopupWindow();
-                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
-                }
-
-                try {
-                    watchingVideo(title, targetFrame);
                     boolean ended = endVideo();
                     watchedThisRun++;
                     String done = "✓ " + label + " · " + formatDuration(System.currentTimeMillis() - videoStartedAt);
@@ -561,36 +512,242 @@ public class AutoPlayer {
         }
     }
 
-    private void watchingVideo(String title, WebElement currentFrame) throws InterruptedException {
-        String totalTime = (String) js.executeScript("return arguments[0].textContent;",
-                driver.findElement(By.cssSelector(PlayerSelector.TOTAL_DURATION.get())));
-        int totalSeconds = stringToSecond(totalTime);
+    /**
+     * 재생 창에서 볼 플레이어 프레임 목록 (화면 순서).
+     * 한 화면에 플레이어가 여러 개면 '오리엔테이션' 상자에 든 것만 빼고 모두 차례로 본다.
+     * 오리엔테이션뿐이면 마지막 것을 본다.
+     */
+    private List<WebElement> findPlayerFrames() throws InterruptedException {
+        By framesSelector = By.cssSelector(PlayerSelector.FRAMES.get());
+        List<WebElement> frames;
+        try {
+            wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(framesSelector));
+            // 플레이어를 하나씩 붙이는 화면이 있어 잠깐 기다렸다가 다시 센다
+            Thread.sleep(Duration.ofSeconds(1L));
+            frames = driver.findElements(framesSelector);
+        } catch (TimeoutException e) {
+            log.warn("영상 화면을 찾지 못해 기본 화면으로 다시 시도합니다.");
+            return List.of(wait.until(ExpectedConditions.presenceOfElementLocated(By.id(PlayerSelector.ROOT.get()))));
+        }
+        if (frames.size() <= 1) {
+            return frames.isEmpty()
+                    ? List.of(driver.findElement(By.id(PlayerSelector.ROOT.get())))
+                    : frames;
+        }
 
+        List<WebElement> targets = new ArrayList<>();
+        StringBuilder detail = new StringBuilder();
+        for (WebElement frame : frames) {
+            String boxTitle = contentBoxTitle(frame);
+            boolean orientation = boxTitle.contains("오리엔테이션");
+            if (!orientation) {
+                targets.add(frame);
+            }
+            detail.append(" [").append(frame.getAttribute("id")).append(": ")
+                    .append(boxTitle.isEmpty() ? "제목 없음" : boxTitle)
+                    .append(orientation ? ", 건너뜀" : "").append("]");
+        }
+        if (targets.isEmpty()) {
+            targets.add(frames.get(frames.size() - 1));
+        }
 
-        boolean keepPlaying = true;
-        int elapsedSeconds = 0;
+        int skipped = frames.size() - targets.size();
+        log.info("    플레이어 " + frames.size() + "개"
+                + (skipped > 0 ? " 중 " + targets.size() + "개 재생 (오리엔테이션 제외)" : " · 차례로 재생"));
+        System.err.println("플레이어 프레임:" + detail);
+        return targets;
+    }
 
-        isPlayingVideo = true;
+    // 플레이어 프레임을 감싼 상자의 제목. 상자가 없으면 빈 문자열
+    private String contentBoxTitle(WebElement frame) {
+        try {
+            WebElement contentBox = frame.findElement(By.xpath(PlayerSelector.CONTENT_BOX.get()));
+            return textOf(contentBox.findElement(By.cssSelector(PlayerSelector.CONTENT_BOX_TITLE.get())));
+        } catch (NoSuchElementException e) {
+            return "";
+        }
+    }
 
-        while (keepPlaying) {
-            String elapsedTime = (String) js.executeScript("return arguments[0].textContent;",
-                    driver.findElement(By.cssSelector(PlayerSelector.ELAPSED.get())));
+    /**
+     * 플레이어를 차례로 재생하며 기준 진행률까지 지켜본다.
+     * 플레이어가 여러 개일 때 재생 버튼이 끝내 안 보이는 것(숨은 프레임 등)은 건너뛴다.
+     *
+     * @return 기준 진행률까지 본 플레이어 수. 0이면 이 영상은 실패
+     */
+    private int playAllPlayers(Video video, String title, String label, List<WebElement> playerFrames)
+            throws InterruptedException {
+        int count = playerFrames.size();
+        int watched = 0;
+        // 연습 문제를 통과하지 못한 경우에만, 첫 플레이어 재생을 시작한 뒤 한 번 푼다
+        boolean exerciseDone = video.isExercise();
+        // 목록의 학습 시간은 강의 하나 단위라 플레이어가 하나일 때만 이어서 센다 (여러 개면 플레이어마다 60%를 새로 채움)
+        long alreadySeconds = count == 1 && video.hasProgress() ? video.getStudiedMinutes() * 60L : -1;
 
-            elapsedSeconds = stringToSecond(elapsedTime);
-            double elapsedPercent = (double) elapsedSeconds / totalSeconds * 100;
+        for (int i = 0; i < count; i++) {
+            WebElement frame = playerFrames.get(i);
+            String player = count > 1 ? "플레이어 " + (i + 1) + "/" + count : null;
 
-            log.progress(title, elapsedTime, totalTime, elapsedPercent);
-
-            if (elapsedPercent >= VIDEO_ELAPSE_PERCENT) {
-                keepPlaying = false;
+            if (!startPlayer(frame)) {
+                if (player != null) {
+                    log.warn("    " + player + " · 재생 버튼이 없어 건너뜁니다.");
+                    continue;
+                }
+                log.error("× " + label + " · 재생 버튼을 찾지 못했습니다.");
+                return 0;
             }
 
+            if (!exerciseDone) {
+                exerciseDone = true;
+                solveExercises(label);
+                // 연습 문제 처리 후 지금 플레이어로 돌아온다 (항상 첫 번째 프레임으로 가면 다른 플레이어를 보게 됨)
+                try {
+                    switchToPopupWindow();
+                    wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(frame));
+                } catch (TimeoutException e) {
+                    log.error("× " + label + " · 연습 문제 뒤 영상 화면으로 돌아가지 못했습니다.");
+                    return 0;
+                }
+            }
+
+            String playerTitle = player == null ? title : title + " (" + player + ")";
+            String failure = watchingVideo(playerTitle, frame, alreadySeconds);
+            if (failure != null) {
+                log.error("× " + label + (player == null ? "" : " · " + player) + " · " + failure);
+                return 0;
+            }
+            watched++;
+
+            if (i < count - 1) {
+                pausePlayer();
+            }
+        }
+
+        if (watched == 0) {
+            log.error("× " + label + " · 재생할 수 있는 플레이어가 없습니다.");
+        }
+        return watched;
+    }
+
+    // 플레이어 프레임으로 들어가 재생을 시작한다 (이어서 보기가 뜨면 이어서). 재생 버튼이 안 보이면 false
+    private boolean startPlayer(WebElement frame) throws InterruptedException {
+        try {
+            switchToPopupWindow();
+            // 화면 밖에 걸친 플레이어가 멈추는 경우가 있어 보이게 스크롤 (창 숨기기 모드는 창이 작다)
+            try {
+                js.executeScript("arguments[0].scrollIntoView({block: 'center'});", frame);
+            } catch (Exception ignored) {
+            }
+            wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(frame));
+        } catch (TimeoutException e) {
+            return false;
+        }
+
+        Thread.sleep(Duration.ofSeconds(1L));
+
+        // 비디오 재생 버튼 클릭
+        try {
+            WebElement playButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.PLAY.get())));
+            playButton.click();
+        } catch (Exception e) {
+            return false;
+        }
+
+        try {
+            WebElement continueButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(PlayerSelector.WATCH_CONTINUE.get())));
+            continueButton.click();
+        } catch (NoSuchElementException | TimeoutException e) {
+            // 이어서 보기 버튼이 없으면 처음부터 재생
+        }
+        return true;
+    }
+
+    // 재생 창의 연습 문제 풀이. 연습 문제가 없으면 그냥 넘어간다. 끝나면 재생 창 최상위 문서에 있다
+    private void solveExercises(String label) {
+        log.status("연습 문제 확인 중 · " + label);
+        // 연습문제 요소를 찾기 위한 컨텍스트 전환
+        driver.switchTo().defaultContent();
+
+        try {
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("form[id^='frm_']")));
+            List<WebElement> examForms = driver.findElements(By.cssSelector("form[id^='frm_']"));
+
+            for (WebElement examForm : examForms) {
+                Exam exam = new Exam(examForm, js);
+                solveExam(exam);  // 각 문제를 해결
+            }
+
+            log.info("    연습문제 제출 · " + examForms.size() + "문항");
+        } catch (TimeoutException te) {
+            // 연습 문제가 없는 영상
+        } catch (Exception e) {
+            log.error("    연습문제를 처리하지 못했습니다: " + e.getMessage());
+        }
+    }
+
+    // 다음 플레이어로 넘어가기 전에 지금 플레이어를 멈춘다 (소리가 겹치지 않도록). 실패해도 그대로 진행
+    private void pausePlayer() {
+        try {
+            js.executeScript(
+                    "if (window.jwplayer) { var p = jwplayer();" +
+                    " if (p.getState && p.getState() === 'playing') { p.pause(); } }");
+        } catch (Exception ignored) {
+        }
+    }
+
+    // 실패한 영상의 재생 창 정리: 학습 종료를 시도하고, 안 되면 창을 닫는다 (다음 영상이 남은 창을 잡지 않도록)
+    private void closeFailedPopup() {
+        isPlayingVideo = false;
+        try {
+            switchToPopupWindow();
+            if (driver.getWindowHandle().equals(mainWindowHandle)) {
+                return;
+            }
+            js.executeScript("if (typeof fnStudyEnd === 'function') { fnStudyEnd(); }");
+            wait.until(ExpectedConditions.alertIsPresent()).accept();
+        } catch (Exception e) {
+            try {
+                if (!driver.getWindowHandle().equals(mainWindowHandle)) {
+                    driver.close();
+                }
+            } catch (Exception ignored) {
+            }
+        } finally {
+            try {
+                switchToMainWindow();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /**
+     * 현재 플레이어를 실제로 재생한 시간이 영상 길이의 VIDEO_ELAPSE_PERCENT가 될 때까지 지켜본다.
+     * 사이트는 재생 위치가 아니라 '재생 중이었던 시간'을 진도로 쌓는다. 이어보기로 뒤에서 시작해도 그만큼은 쳐 주지 않으므로
+     * 같은 방식으로 재생 중인 시간만 센다. 멈춰 있으면 다시 재생하고, 끝까지 갔는데 모자라면 처음부터 다시 본다.
+     *
+     * @param alreadySeconds 강의 목록에 나온 지금까지의 학습 시간(초). 이만큼은 이미 들은 것으로 치고 남은 만큼만 재생한다.
+     *                       모르면 -1 (이번 실행에서 60%를 새로 채움)
+     * @return 실패 사유. 기준까지 봤으면 null
+     */
+    private String watchingVideo(String title, WebElement currentFrame, long alreadySeconds) throws InterruptedException {
+        isPlayingVideo = true;
+        long startedAt = System.currentTimeMillis();
+        boolean fromList = alreadySeconds >= 0;
+        long alreadyMillis = fromList ? alreadySeconds * 1000 : 0;
+        boolean remainingLogged = false;
+        long playedMillis = 0;
+        long lastPlayingAt = 0;        // 직전 확인 때 재생 중이었으면 그 시각
+        long stoppedSince = startedAt; // 재생 중이 아니게 된 시각 (재생 중이면 0)
+        long lastResumeAt = 0;
+        boolean resumeLogged = false;
+        double lastPosition = -1;
+
+        while (true) {
             // 돌발 퀴즈 확인 및 처리
             if (handleSurpriseQuiz(currentFrame)) {
                 // 퀴즈 처리 후 영상이 일시정지 상태일 수 있으므로 다시 재생
                 try {
                     WebElement playButton = driver.findElement(By.cssSelector(PlayerSelector.PLAY.get()));
-                    if(playButton.isDisplayed()) {
+                    if (playButton.isDisplayed()) {
                         playButton.click();
                     }
                 } catch (Exception e) {
@@ -598,11 +755,147 @@ public class AutoPlayer {
                 }
             }
 
+            PlayerState state = readPlayerState();
+            long now = System.currentTimeMillis();
+            // 플레이어 API가 없으면 재생 위치가 조금씩 늘어나는지로 판단 (이어보기 같은 큰 이동은 재생으로 치지 않음)
+            boolean playing = state.state() != null
+                    ? "playing".equals(state.state())
+                    : lastPosition >= 0 && state.position() > lastPosition && state.position() - lastPosition <= 3;
+            lastPosition = state.position();
+
+            if (playing) {
+                if (lastPlayingAt > 0) {
+                    playedMillis += now - lastPlayingAt;
+                }
+                lastPlayingAt = now;
+                stoppedSince = 0;
+            } else {
+                lastPlayingAt = 0;
+                if (stoppedSince == 0) {
+                    stoppedSince = now;
+                }
+            }
+
+            if (state.duration() > 0) {
+                // 기준 = 영상 길이의 60% (목록 기준으로 이어서 셀 때는 여유분을 더함)
+                long targetMillis = (long) (state.duration() * 10 * VIDEO_ELAPSE_PERCENT)
+                        + (fromList ? Duration.ofSeconds(PROGRESS_MARGIN_SEC).toMillis() : 0);
+                if (fromList && !remainingLogged) {
+                    long remainingMinutes = (long) Math.ceil(Math.max(0, targetMillis - alreadyMillis) / 60000.0);
+                    log.info("    지금까지 " + alreadySeconds / 60 + "분 학습 · 기준까지 " + remainingMinutes + "분 더 재생");
+                    remainingLogged = true;
+                }
+                long studiedMillis = alreadyMillis + playedMillis;
+                double percent = studiedMillis / 10.0 / state.duration();
+                log.progress(title, formatClock(studiedMillis / 1000), formatClock((long) state.duration()), percent);
+                if (studiedMillis >= targetMillis) {
+                    // 학습 종료(endVideo)까지는 재생 중으로 둔다
+                    return null;
+                }
+            } else if (now - startedAt > Duration.ofSeconds(DURATION_WAIT_SEC).toMillis()) {
+                isPlayingVideo = false;
+                return "영상 길이를 읽지 못했습니다.";
+            }
+
+            // 멈춰 있으면 몇 초마다 다시 재생을 시도하고, 너무 오래 안 되면 포기
+            if (stoppedSince > 0 && now - stoppedSince > Duration.ofSeconds(STALL_RESUME_SEC).toMillis()) {
+                if (now - stoppedSince > Duration.ofSeconds(STALL_GIVE_UP_SEC).toMillis()) {
+                    isPlayingVideo = false;
+                    return "영상이 재생되지 않습니다.";
+                }
+                if (now - lastResumeAt > Duration.ofSeconds(STALL_RESUME_SEC).toMillis()) {
+                    if (resumePlayback(state)) {
+                        log.info("    끝까지 봤지만 학습 시간이 모자라 처음부터 다시 봅니다.");
+                    } else if (!resumeLogged) {
+                        log.info("    영상이 멈춰 있어 다시 재생합니다.");
+                        resumeLogged = true;
+                    }
+                    lastResumeAt = now;
+                }
+            }
+
             Thread.sleep(500);
         }
+    }
 
-        isPlayingVideo = false;
+    /** 플레이어 상태. state는 JW Player의 getState() 값이고, API가 없으면 null (재생 위치·길이는 화면 글자로 읽음) */
+    private record PlayerState(String state, double position, double duration) {
+    }
 
+    private PlayerState readPlayerState() {
+        try {
+            Object result = js.executeScript(
+                    "var p = window.jwplayer && jwplayer();" +
+                    "if (!p || !p.getState) { return null; }" +
+                    "return [String(p.getState()), Number(p.getPosition()) || 0, Number(p.getDuration()) || 0];");
+            if (result instanceof List<?> values && values.size() == 3) {
+                double duration = ((Number) values.get(2)).doubleValue();
+                return new PlayerState((String) values.get(0), ((Number) values.get(1)).doubleValue(),
+                        Double.isFinite(duration) ? duration : 0);
+            }
+        } catch (Exception e) {
+            // 플레이어 API를 못 쓰면 화면 글자로
+        }
+        return new PlayerState(null, stringToSecond(playerText(PlayerSelector.ELAPSED)),
+                stringToSecond(playerText(PlayerSelector.TOTAL_DURATION)));
+    }
+
+    /**
+     * 멈춘 플레이어를 다시 재생: 이어보기 확인이 떠 있으면 '예', 끝까지 갔으면 처음부터, 아니면 그냥 재생.
+     *
+     * @return 처음부터 다시 재생했으면 true
+     */
+    private boolean resumePlayback(PlayerState state) {
+        try {
+            List<WebElement> confirm = driver.findElements(By.cssSelector(PlayerSelector.WATCH_CONTINUE.get()));
+            if (!confirm.isEmpty() && confirm.get(0).isDisplayed()) {
+                confirm.get(0).click();
+                return false;
+            }
+            boolean ended = "complete".equals(state.state())
+                    || (state.duration() > 0 && state.position() >= state.duration() - 1);
+            if (state.state() != null) {
+                js.executeScript("var p = jwplayer(); if (arguments[0]) { p.seek(0); } p.play();", ended);
+                return ended;
+            }
+            WebElement playButton = driver.findElement(By.cssSelector(PlayerSelector.PLAY.get()));
+            if (playButton.isDisplayed()) {
+                playButton.click();
+            }
+        } catch (Exception e) {
+            // 다음 확인 때 다시 시도
+        }
+        return false;
+    }
+
+    // 초 → 12:34 또는 1:02:03
+    private static String formatClock(long totalSeconds) {
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        return hours > 0
+                ? String.format("%d:%02d:%02d", hours, minutes, seconds)
+                : String.format("%02d:%02d", minutes, seconds);
+    }
+
+    // 현재 플레이어 프레임 안 요소의 글자 (재생 시간 등). 아직 없으면 빈 문자열
+    private String playerText(PlayerSelector selector) {
+        try {
+            Object text = js.executeScript("return arguments[0].textContent;",
+                    driver.findElement(By.cssSelector(selector.get())));
+            return Objects.toString(text, "").trim();
+        } catch (NoSuchElementException e) {
+            return "";
+        }
+    }
+
+    // 화면에 안 보이는 요소는 getText()가 빈 문자열이라 textContent로 한 번 더 읽는다
+    private static String textOf(WebElement element) {
+        String text = element.getText().trim();
+        if (text.isEmpty()) {
+            text = Objects.toString(element.getDomProperty("textContent"), "").replaceAll("\\s+", " ").trim();
+        }
+        return text;
     }
 
     // 사이트에 학습 종료를 알린다. 성공하면 true.
@@ -682,8 +975,13 @@ public class AutoPlayer {
         int seconds = 0;
 
         // 뒤에서부터 시간을 초 단위로 변환하여 더함
-        for (int i = 0; i < parts.length; i++) {
-            seconds += Integer.parseInt(parts[i]) * units[units.length - parts.length + i];
+        try {
+            for (int i = 0; i < parts.length; i++) {
+                seconds += Integer.parseInt(parts[i].trim()) * units[units.length - parts.length + i];
+            }
+        } catch (RuntimeException e) {
+            // 아직 시간이 안 채워진 표시("--:--" 등)는 0초로 본다
+            return 0;
         }
 
         return seconds;
@@ -1019,20 +1317,48 @@ public class AutoPlayer {
 
     private void expandLecture(Lecture lecture) {
         WebElement lectureElement = lecture.getLectureElement(driver);
+        // 펼치기 버튼은 토글이라, 이미 펼쳐졌거나 펼치는 중인 과목을 다시 누르면 도리어 접힌다
+        long sinceLastClick = System.currentTimeMillis() - expandClickedAt.getOrDefault(lecture.getId(), 0L);
+        if (isExpanded(lectureElement) || sinceLastClick < Duration.ofSeconds(VIEW_BUTTON_WAIT_SEC).toMillis()) {
+            return;
+        }
         WebElement expandButton = lectureElement.findElement(By.cssSelector(LectureSelector.MORE.get().replace("@", lecture.getId().split("-")[1])));
         if (expandButton.isDisplayed()) {
             try {
                 js.executeScript("arguments[0].click();", expandButton);
+                expandClickedAt.put(lecture.getId(), System.currentTimeMillis());
             } catch (Exception e) {
                 log.error("과목을 펼치지 못했습니다: " + lecture.getTitle());
             }
         }
     }
 
+    // 과목의 영상 목록이 화면에 보이면 펼쳐진 상태
+    private boolean isExpanded(WebElement lectureElement) {
+        for (WebElement item : lectureElement.findElements(By.cssSelector(LectureSelector.VIDEO_ROOT.get()))) {
+            if (item.isDisplayed()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void waitForViewButtonAndClick(Video video) {
-        // 강의 보기 버튼을 다시 대기
-        WebElement viewButton = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get())));
-        viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
+        By viewButtonSelector = By.cssSelector("#" + video.getId() + " > " + LectureSelector.VIDEO_SHOW_VIDEO.get());
+        WebElement viewButton;
+        try {
+            // 펼친 뒤 목록이 늦게 보이는 과목이 있어 기본 대기보다 길게 기다린다
+            viewButton = new WebDriverWait(driver, Duration.ofSeconds(VIEW_BUTTON_WAIT_SEC))
+                    .until(ExpectedConditions.visibilityOfElementLocated(viewButtonSelector));
+            viewButton = wait.until(ExpectedConditions.elementToBeClickable(viewButton));
+        } catch (TimeoutException e) {
+            // 그래도 안 보이면 숨은 채로 누른다 (스크립트 클릭은 화면에 안 보여도 동작)
+            List<WebElement> buttons = driver.findElements(viewButtonSelector);
+            if (buttons.isEmpty()) {
+                throw e;
+            }
+            viewButton = buttons.get(0);
+        }
         js.executeScript("arguments[0].click();", viewButton);
     }
 
