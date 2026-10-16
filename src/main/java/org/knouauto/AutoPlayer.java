@@ -727,48 +727,57 @@ public class AutoPlayer {
         return false; // 퀴즈가 보이지 않으면 아무것도 하지 않고 종료
     }
 
-    private List<String> showLectureSelectionPopup(List<WebElement> lectures) {
-        List<JCheckBox> checkBoxes = new ArrayList<>();
-        JPanel panel = new JPanel(new BorderLayout());
-
-        // 전체 선택/해제 체크박스
-        JCheckBox selectAllCheckBox = new JCheckBox("전체 선택/해제");
-        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        topPanel.add(selectAllCheckBox);
-
-        // 강의 목록 체크박스 패널
-        JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
-        JScrollPane scrollPane = new JScrollPane(checkBoxPanel);
+    private List<String> showLectureSelectionPopup(List<WebElement> lectures) throws Exception {
+        // 강의 제목만 먼저 수집 (백그라운드 스레드에서 DOM 접근)
+        List<String> lectureTitles = new ArrayList<>();
         for (WebElement lectureElement : lectures) {
-            String lectureTitle = lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText();
-            JCheckBox checkBox = new JCheckBox(lectureTitle);
-            checkBoxes.add(checkBox);
-            checkBoxPanel.add(checkBox);
+            lectureTitles.add(lectureElement.findElement(By.cssSelector(LectureSelector.TITLE.get())).getText());
         }
 
-        // 전체 선택/해제 체크박스에 대한 액션 리스너
-        selectAllCheckBox.addActionListener(e -> {
-            boolean isSelected = selectAllCheckBox.isSelected();
-            for (JCheckBox checkBox : checkBoxes) {
-                checkBox.setSelected(isSelected);
+        // Swing UI(JOptionPane)는 반드시 EDT에서: invokeAndWait + FutureTask로 결과 회수
+        java.util.concurrent.FutureTask<List<String>> task = new java.util.concurrent.FutureTask<>(() -> {
+            List<JCheckBox> checkBoxes = new ArrayList<>();
+            JPanel panel = new JPanel(new BorderLayout());
+
+            // 전체 선택/해제 체크박스
+            JCheckBox selectAllCheckBox = new JCheckBox("전체 선택/해제");
+            JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            topPanel.add(selectAllCheckBox);
+
+            // 강의 목록 체크박스 패널
+            JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
+            for (String title : lectureTitles) {
+                JCheckBox checkBox = new JCheckBox(title);
+                checkBoxes.add(checkBox);
+                checkBoxPanel.add(checkBox);
             }
-        });
+            JScrollPane scrollPane = new JScrollPane(checkBoxPanel);
 
-        panel.add(topPanel, BorderLayout.NORTH);
-        panel.add(scrollPane, BorderLayout.CENTER);
+            // 전체 선택/해제 체크박스에 대한 액션 리스너
+            selectAllCheckBox.addActionListener(e -> {
+                boolean isSelected = selectAllCheckBox.isSelected();
+                for (JCheckBox checkBox : checkBoxes) {
+                    checkBox.setSelected(isSelected);
+                }
+            });
 
-        int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
+            panel.add(topPanel, BorderLayout.NORTH);
+            panel.add(scrollPane, BorderLayout.CENTER);
 
-        List<String> excludedLectures = new ArrayList<>();
-        if (result == JOptionPane.OK_OPTION) {
-            for (JCheckBox checkBox : checkBoxes) {
-                if (checkBox.isSelected()) {
-                    excludedLectures.add(checkBox.getText());
+            int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
+
+            List<String> selected = new ArrayList<>();
+            if (result == JOptionPane.OK_OPTION) {
+                for (JCheckBox checkBox : checkBoxes) {
+                    if (checkBox.isSelected()) {
+                        selected.add(checkBox.getText());
+                    }
                 }
             }
-        }
-
-        return excludedLectures;
+            return selected;
+        });
+        SwingUtilities.invokeAndWait(task);
+        return task.get();
     }
 
     private void clickViewButton(Lecture lecture, Video video) {
