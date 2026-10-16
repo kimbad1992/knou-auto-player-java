@@ -92,6 +92,7 @@ public class AutoPlayer {
                     AutoPlayer.this.savedLectures = savedLectures == null ? List.of() : List.copyOf(savedLectures);
 
                     // WebDriver 초기화 및 옵션 설정
+                    log.status("브라우저 준비 중");
                     initializeDriver(enableHeadless, muteAudio);
 
                     // 로그인 및 강의 실행
@@ -147,13 +148,13 @@ public class AutoPlayer {
 
     // 로그인 및 강의 실행
     private void startLearning(String userId, String userPassword) throws Exception {
+        log.status("로그인 중");
         log.info("로그인 중...");
         login(userId, userPassword);
         log.info("로그인 성공, 강의 로딩 ...");
         if (loginSuccessCallback != null) {
             SwingUtilities.invokeLater(loginSuccessCallback);
         }
-        log.newLine();
         loadAndPlayLectures();
     }
 
@@ -225,6 +226,7 @@ public class AutoPlayer {
         int notWatchedVideoCount = 0;
 
         try {
+            log.status("강의 목록 불러오는 중");
             log.info("강의 로딩 중...");
 
             // 강의 목록을 가져오기
@@ -302,7 +304,6 @@ public class AutoPlayer {
                     log.info(video.toString());
                 }
                 lectureList.add(lecture);
-                log.newLine();
             }
 
             // 전체 로깅 메시지를 출력
@@ -310,8 +311,6 @@ public class AutoPlayer {
             log.info("   ├ ✔ watched: " + watchedVideoCount);
             log.info("   ├ ◻ waiting: " + waitingVideoCount);
             log.info("   └ ✖ not watched: " + notWatchedVideoCount);
-            log.newLine();
-
         } catch (Exception e) {
             log.error("강의 로딩 중 에러 발생: " + e.getMessage());
         }
@@ -378,7 +377,7 @@ public class AutoPlayer {
             return; // 작업이 취소되었으면 즉시 종료
         }
 
-        log.newLine();
+        log.status("재생 준비 중 · " + title.replace(" :: ", " · "));
         log.info("재생 시작 :: " + title);
 
         // 메인 창으로 포커스 전환
@@ -493,6 +492,7 @@ public class AutoPlayer {
 
                 // 연습 문제를 통과하지 못한 경우
                 if (!video.isExercise()) {
+                    log.status("연습 문제 확인 중 · " + title.replace(" :: ", " · "));
                     log.info("연습 문제를 확인합니다.");
                     // 연습문제 요소를 찾기 위한 컨텍스트 전환
                     driver.switchTo().defaultContent();
@@ -513,8 +513,6 @@ public class AutoPlayer {
                         log.error("연습문제 확인 중 오류 발생: " + e.getMessage());
                     }
 
-                    log.newLine();
-
                     // 연습 문제 처리 후 다시 플레이어 프레임으로 전환
                     switchToPopupWindow();
                     wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(PlayerSelector.ROOT.get()));
@@ -526,7 +524,6 @@ public class AutoPlayer {
                     watchingVideo(title, targetFrame);
                     endVideo();
                 } catch (InterruptedException e) {
-                    log.newLine();
                     log.warn("유저 취소로 인한 중단");
                 }
             }
@@ -552,7 +549,7 @@ public class AutoPlayer {
             elapsedSeconds = stringToSecond(elapsedTime);
             double elapsedPercent = (double) elapsedSeconds / totalSeconds * 100;
 
-            log.logProgress(title, elapsedTime, elapsedPercent);
+            log.progress(title, elapsedTime, totalTime, elapsedPercent);
 
             if (elapsedPercent >= VIDEO_ELAPSE_PERCENT) {
                 keepPlaying = false;
@@ -577,7 +574,6 @@ public class AutoPlayer {
 
         isPlayingVideo = false;
 
-        log.newLine();
         log.info("강의 시청 완료: " + title);
     }
 
@@ -820,45 +816,90 @@ public class AutoPlayer {
     }
 
     /**
-     * 과목 선택 팝업. 저장된 선택(defaultSelected)에 있는 과목은 기본 체크 상태로 띄운다.
+     * 과목 선택 창. 저장된 선택(defaultSelected)에 있는 과목은 기본 체크 상태로 띄운다.
      *
-     * @return OK로 확정한 과목 제목 목록, 취소하면 null
+     * @return 시작으로 확정한 과목 제목 목록, 취소하면 null
      */
     private List<String> showLectureSelectionPopup(List<String> lectureTitles, List<String> defaultSelected) throws Exception {
-        // Swing UI(JOptionPane)는 반드시 EDT에서: invokeAndWait + FutureTask로 결과 회수
+        // Swing UI는 반드시 EDT에서: invokeAndWait + FutureTask로 결과 회수
         java.util.concurrent.FutureTask<List<String>> task = new java.util.concurrent.FutureTask<>(() -> {
+            Window owner = findMainWindow();
+            JDialog dialog = new JDialog(owner, "수강할 과목 선택", Dialog.ModalityType.APPLICATION_MODAL);
+            dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
             List<JCheckBox> checkBoxes = new ArrayList<>();
-            JPanel panel = new JPanel(new BorderLayout());
-
-            // 전체 선택/해제 체크박스
-            JCheckBox selectAllCheckBox = new JCheckBox("전체 선택/해제");
-            JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            topPanel.add(selectAllCheckBox);
-
-            // 강의 목록 체크박스 패널
-            JPanel checkBoxPanel = new JPanel(new GridLayout(0, 1));
+            JPanel listPanel = new JPanel();
+            listPanel.setLayout(new BoxLayout(listPanel, BoxLayout.Y_AXIS));
+            listPanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+            Color listBackground = UIManager.getColor("List.background");
+            if (listBackground != null) {
+                listPanel.setBackground(listBackground);
+            }
             for (String title : lectureTitles) {
                 JCheckBox checkBox = new JCheckBox(title);
+                checkBox.setOpaque(false);
                 checkBox.setSelected(defaultSelected.contains(title));
                 checkBoxes.add(checkBox);
-                checkBoxPanel.add(checkBox);
+                listPanel.add(checkBox);
             }
-            JScrollPane scrollPane = new JScrollPane(checkBoxPanel);
+            JScrollPane scrollPane = new JScrollPane(listPanel);
+            scrollPane.getVerticalScrollBar().setUnitIncrement(16);
 
-            // 전체 선택/해제 체크박스에 대한 액션 리스너
-            selectAllCheckBox.addActionListener(e -> {
-                boolean isSelected = selectAllCheckBox.isSelected();
+            // 전체 선택: 개별 체크 상태에 따라 같이 맞춰 준다
+            JCheckBox selectAllCheckBox = new JCheckBox("전체 선택");
+            Runnable syncSelectAll = () -> {
+                boolean all = !checkBoxes.isEmpty();
                 for (JCheckBox checkBox : checkBoxes) {
-                    checkBox.setSelected(isSelected);
+                    all &= checkBox.isSelected();
+                }
+                selectAllCheckBox.setSelected(all);
+            };
+            selectAllCheckBox.addActionListener(e -> {
+                boolean selected = selectAllCheckBox.isSelected();
+                for (JCheckBox checkBox : checkBoxes) {
+                    checkBox.setSelected(selected);
                 }
             });
+            for (JCheckBox checkBox : checkBoxes) {
+                checkBox.addActionListener(e -> syncSelectAll.run());
+            }
+            syncSelectAll.run();
 
-            panel.add(topPanel, BorderLayout.NORTH);
-            panel.add(scrollPane, BorderLayout.CENTER);
+            boolean[] confirmed = {false};
+            JButton startButton = new JButton("시작");
+            JButton cancelButton = new JButton("취소");
+            startButton.addActionListener(e -> {
+                confirmed[0] = true;
+                dialog.dispose();
+            });
+            cancelButton.addActionListener(e -> dialog.dispose());
 
-            int result = JOptionPane.showConfirmDialog(null, panel, "강의를 선택하세요 (수강할 강의 체크)", JOptionPane.OK_CANCEL_OPTION);
+            // macOS는 기본 버튼이 오른쪽, Windows는 왼쪽
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+            buttonPanel.add(isMac ? cancelButton : startButton);
+            buttonPanel.add(isMac ? startButton : cancelButton);
 
-            if (result != JOptionPane.OK_OPTION) {
+            JPanel bottom = new JPanel(new BorderLayout());
+            bottom.add(selectAllCheckBox, BorderLayout.WEST);
+            bottom.add(buttonPanel, BorderLayout.EAST);
+
+            JPanel content = new JPanel(new BorderLayout(0, 10));
+            content.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+            content.add(new JLabel("수강할 과목을 체크하세요."), BorderLayout.NORTH);
+            content.add(scrollPane, BorderLayout.CENTER);
+            content.add(bottom, BorderLayout.SOUTH);
+
+            dialog.setContentPane(content);
+            dialog.getRootPane().setDefaultButton(startButton);
+            dialog.getRootPane().registerKeyboardAction(e -> dialog.dispose(),
+                    KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            dialog.setSize(420, 360);
+            dialog.setMinimumSize(new java.awt.Dimension(320, 240));
+            dialog.setLocationRelativeTo(owner);
+            dialog.setVisible(true); // 모달: 닫힐 때까지 대기
+
+            if (!confirmed[0]) {
                 return null;
             }
             List<String> selected = new ArrayList<>();
@@ -871,6 +912,16 @@ public class AutoPlayer {
         });
         SwingUtilities.invokeAndWait(task);
         return task.get();
+    }
+
+    // 과목 선택 창의 부모로 쓸 메인 창 (없으면 null)
+    private static Window findMainWindow() {
+        for (Frame frame : Frame.getFrames()) {
+            if (frame.isVisible()) {
+                return frame;
+            }
+        }
+        return null;
     }
 
     private void clickViewButton(Lecture lecture, Video video) {

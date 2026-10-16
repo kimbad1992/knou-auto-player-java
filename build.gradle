@@ -28,6 +28,9 @@ dependencies {
 
     // 자동 로그인 비밀번호를 OS 자격 증명 저장소(Windows 자격 증명 관리자 / macOS 키체인)에 보관
     implementation 'com.github.javakeyring:java-keyring:1.0.4'
+
+    // Swing 룩앤필 (Windows/macOS 공통으로 동일한 모습)
+    implementation 'com.formdev:flatlaf:3.7.2'
 }
 
 test {
@@ -38,7 +41,7 @@ test {
 shadowJar {
     archiveBaseName.set('knou-auto-player')
     archiveClassifier.set('fat')
-    archiveVersion.set('1.0.5')
+    archiveVersion.set('1.0.6')
     manifest {
         attributes 'Main-Class': 'org.knouauto.GUI'
     }
