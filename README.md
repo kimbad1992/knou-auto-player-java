@@ -8,13 +8,13 @@
 Aiden Lee님의 [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-player)을  
 자바 Swing UI를 사용해 한번에 실행할 수 있도록 포팅 시도
 
-Release로는 Launch4J로 Executable을 만들어 배포함
+Release에는 Java 런타임이 포함된 설치 파일(Windows `.msi`, macOS `.dmg`)을 올리므로 JDK 설치 없이 실행됩니다. (Chrome은 설치되어 있어야 함)
 
 - 과목 당 일일 수강 한도 초과 시 다음 과목으로 넘기기
 - 수강 과목 선택 추가
 - 연습문제 풀이 추가 (정답 여부와 상관 없이 랜덤한 선택지를 찍도록 작동)
 - 자동 로그인 추가 (아래 참고)
-- macOS 빌드 추가 (아래 참고)
+- Windows / macOS 설치 파일 빌드 추가 (아래 참고)
 
 ### 자동 로그인
 
@@ -24,15 +24,15 @@ Release로는 Launch4J로 Executable을 만들어 배포함
 - 체크를 해제하면 저장된 정보가 바로 삭제됩니다.
 - macOS에서는 처음 실행할 때 키체인 접근 허용 창이 뜰 수 있습니다. `항상 허용`을 누르면 됩니다.
 
+### Windows
+
+[Releases](../../releases)에서 `KNOU Auto Player-x.x.x.msi`를 내려받아 실행하면 설치됩니다. 설치 후 시작 메뉴와 바탕화면 바로가기로 실행하세요.
+
+서명되지 않은 설치 파일이라 처음 실행 시 Windows SmartScreen 경고가 뜹니다. `추가 정보 > 실행`을 누르면 됩니다.
+
 ### macOS
 
-macOS용 `.dmg`는 Java 런타임이 포함되어 있어 JDK 설치 없이 실행됩니다. (Chrome은 설치되어 있어야 함)
-
-__빌드__
-- GitHub Actions의 `Build macOS` 워크플로를 수동 실행하거나 `v*` 태그를 push하면 Apple Silicon(arm64) / Intel(x64)용 `.dmg`가 Artifacts로 올라옵니다.
-- Mac에서 직접 빌드: `./gradlew packageMac` → `build/jpackage/dist/`
-
-__실행__
+[Releases](../../releases)에서 `.dmg`를 내려받아 앱을 `Applications`로 끌어다 놓으면 설치됩니다. (Apple Silicon은 arm64, Intel Mac은 x64)
 
 서명되지 않은 앱이라 처음 실행 시 "확인되지 않은 개발자" 경고로 열리지 않습니다.
 `시스템 설정 > 개인정보 보호 및 보안`에서 `그래도 열기`를 누르거나, 터미널에서 아래 명령을 실행하세요.
@@ -41,10 +41,21 @@ __실행__
 xattr -dr com.apple.quarantine "/Applications/KNOU Auto Player.app"
 ```
 
-### Required
+### 소스 빌드
 
-- JDK 21 버전 : [JDK Download Page - Oracle](https://www.oracle.com/java/technologies/downloads/)
-- JDK 설치 후 환경변수 설정
+직접 빌드할 때만 JDK 21이 필요합니다. 설치 파일로 실행하는 경우에는 필요 없습니다.
+
+__GitHub Actions__
+- `Build Release` 워크플로를 수동 실행하거나 `v*` 태그를 push하면 Windows(x64) `.msi`, macOS(arm64/x64) `.dmg`가 Artifacts로 올라옵니다.
+
+__로컬 빌드__ (jpackage는 크로스 빌드가 안 되므로 각 OS에서 실행)
+- Windows: [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases) 설치 후 `gradlew packageWindows` → `build\jpackage\dist\`
+- macOS: `./gradlew packageMac` → `build/jpackage/dist/`
+- fat jar만 필요하면 `./gradlew shadowJar` → `build/libs/`
+
+__JDK 21 설치__
+- [JDK Download Page - Oracle](https://www.oracle.com/java/technologies/downloads/)
+- 설치 후 환경변수 설정
 
 __Windows Batch 파일로 환경 설정__
  ```bash  
