@@ -36,6 +36,7 @@ public class AutoPlayer {
     private SwingWorker<Void, String> worker;
     private String mainWindowHandle;
     private Runnable stopCallback;
+    private Runnable loginSuccessCallback;
 
     private final ColorLogger log;
 
@@ -48,6 +49,10 @@ public class AutoPlayer {
 
     public void setStopCallback (Runnable stopCallback) {
         this.stopCallback = stopCallback;
+    }
+
+    public void setLoginSuccessCallback(Runnable loginSuccessCallback) {
+        this.loginSuccessCallback = loginSuccessCallback;
     }
 
     public void start(String userId, String userPassword, boolean enableHeadless, boolean muteAudio, boolean overLimit) {
@@ -112,6 +117,9 @@ public class AutoPlayer {
         log.info("로그인 중...");
         login(userId, userPassword);
         log.info("로그인 성공, 강의 로딩 ...");
+        if (loginSuccessCallback != null) {
+            SwingUtilities.invokeLater(loginSuccessCallback);
+        }
         log.newLine();
         loadAndPlayLectures();
     }

@@ -25,6 +25,9 @@ dependencies {
 
     // Jackson Databind 특정 버전 추가
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
+
+    // 자동 로그인 비밀번호를 OS 자격 증명 저장소(Windows 자격 증명 관리자 / macOS 키체인)에 보관
+    implementation 'com.github.javakeyring:java-keyring:1.0.4'
 }
 
 test {
