@@ -50,6 +50,8 @@ shadowJar {
 // jpackage 패키징 (크로스 빌드가 안 되므로 각 OS에서만 실행 가능)
 def jpackageInputDir = layout.buildDirectory.dir('jpackage/input')
 def jpackageOutputDir = layout.buildDirectory.dir('jpackage/dist')
+def jpackageImageDir = layout.buildDirectory.dir('jpackage/image')
+def jpackagePortableDir = layout.buildDirectory.dir('jpackage/portable')
 def osName = System.getProperty('os.name').toLowerCase()
 def jpackageExecutable = "${System.getProperty('java.home')}/bin/jpackage" + (osName.contains('windows') ? '.exe' : '')
 
@@ -60,8 +62,8 @@ tasks.register('prepareJpackageInput', Sync) {
 }
 
 // OS별 jpackage 태스크 공통 등록
-// osLabel: 설명용 OS 이름, osKeyword: os.name에 포함돼야 하는 문자열, type: jpackage --type
-def registerJpackageTask = { String taskName, String osLabel, String osKeyword, String type, String iconPath, List<String> extraArgs ->
+// osLabel: 설명용 OS 이름, osKeyword: os.name에 포함돼야 하는 문자열, type: jpackage --type, destDir: 출력 폴더(실행 전에 비움)
+def registerJpackageTask = { String taskName, String osLabel, String osKeyword, String type, String iconPath, List<String> extraArgs, destDir ->
     tasks.register(taskName, Exec) {
         group = 'distribution'
         description = "${osLabel}용 .${type} 파일을 생성합니다. (${osLabel}에서만 실행 가능)"
@@ -71,7 +73,7 @@ def registerJpackageTask = { String taskName, String osLabel, String osKeyword, 
             if (!osName.contains(osKeyword)) {
                 throw new GradleException("${taskName}은 ${osLabel}에서만 실행할 수 있습니다.")
             }
-            project.delete(jpackageOutputDir)
+            project.delete(destDir)
         }
 
         executable jpackageExecutable
@@ -82,14 +84,14 @@ def registerJpackageTask = { String taskName, String osLabel, String osKeyword, 
               '--main-jar', shadowJar.archiveFileName.get(),
               '--main-class', 'org.knouauto.GUI',
               '--icon', file(iconPath).path,
-              '--dest', jpackageOutputDir.get().asFile.path] + extraArgs)
+              '--dest', destDir.get().asFile.path] + extraArgs)
     }
 }
 
 // macOS용 .dmg
 registerJpackageTask('packageMac', 'macOS', 'mac', 'dmg', 'packaging/macos/icon.icns', [
         '--mac-package-identifier', 'org.knouauto.player',
-])
+], jpackageOutputDir)
 
 // Windows용 .msi (WiX Toolset 3.x 필요)
 // --win-upgrade-uuid는 같은 앱으로 인식돼 덮어쓰기 설치가 되도록 고정값 사용 (바꾸지 말 것)
@@ -98,4 +100,20 @@ registerJpackageTask('packageWindows', 'Windows', 'windows', 'msi', 'packaging/w
         '--win-shortcut',
         '--win-dir-chooser',
         '--win-upgrade-uuid', 'a3c6f1e2-7b84-4d2e-9c5a-1f0e8d7b6a21',
-])
+], jpackageOutputDir)
+
+// Windows용 앱 이미지: 런타임이 포함된 실행 폴더 (설치 프로그램이 아니므로 WiX 불필요)
+registerJpackageTask('packageWindowsImage', 'Windows', 'windows', 'app-image', 'packaging/windows/icon.ico', [],
+        jpackageImageDir).configure {
+    description = 'Windows용 앱 이미지 폴더(런타임 포함)를 생성합니다. (Windows에서만 실행 가능)'
+}
+
+// Windows용 포터블 zip: 압축을 풀고 KNOU Auto Player.exe를 바로 실행 (zip 안 최상위는 "KNOU Auto Player/" 폴더)
+tasks.register('packageWindowsPortable', Zip) {
+    group = 'distribution'
+    description = 'Windows용 포터블 zip(설치 없이 실행)을 생성합니다. (Windows에서만 실행 가능)'
+    dependsOn 'packageWindowsImage'
+    from jpackageImageDir
+    archiveFileName = "KNOU Auto Player-${shadowJar.archiveVersion.get()}-windows-portable.zip"
+    destinationDirectory = jpackagePortableDir
+}

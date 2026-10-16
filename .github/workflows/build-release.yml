@@ -2,6 +2,11 @@ name: Build Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '이미 있는 릴리즈(예: v1.0.7)에 빠진 파일만 첨부. 비우면 Artifacts만 생성'
+        required: false
+        default: ''
   push:
     tags:
       - 'v*'
@@ -60,20 +65,33 @@ jobs:
       - name: Build msi
         run: ./gradlew packageWindows --no-daemon
 
+      # 설치 없이 압축만 풀어 실행하는 zip (런타임 포함)
+      - name: Build portable zip
+        run: ./gradlew packageWindowsPortable --no-daemon
+
       - uses: actions/upload-artifact@v7
         with:
           name: knou-auto-player-windows-x64
           path: build/jpackage/dist/*.msi
           if-no-files-found: error
 
-  # v* 태그 push일 때만: 빌드된 설치 파일 이름을 릴리즈 규칙(KNOUAuto-x.x.x*)으로 바꿔 draft 릴리즈에 첨부
-  # 릴리즈 노트는 draft에서 직접 작성한 뒤 공개
+      - uses: actions/upload-artifact@v7
+        with:
+          name: knou-auto-player-windows-x64-portable
+          path: build/jpackage/portable/*.zip
+          if-no-files-found: error
+
+  # v* 태그 push: 빌드된 파일 이름을 릴리즈 규칙(KNOUAuto-x.x.x*)으로 바꿔 draft 릴리즈에 첨부
+  #   릴리즈 노트는 draft에서 직접 작성한 뒤 공개
+  # 수동 실행 + release_tag: 이미 있는 릴리즈에 빠진 파일만 첨부 (올라가 있는 파일은 덮어쓰지 않음)
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ inputs.release_tag || github.ref_name }}
 
     steps:
       - uses: actions/download-artifact@v8
@@ -82,21 +100,44 @@ jobs:
 
       - name: Rename files
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
+          # 빌드한 버전과 태그가 다르면 중단 (수동 실행 시 다른 버전의 릴리즈에 잘못 붙이지 않도록)
+          shopt -s nullglob
+          msi=(dist/knou-auto-player-windows-x64/*.msi)
+          if [ "${#msi[@]}" -ne 1 ] || [[ "${msi[0]}" != *"-${version}.msi" ]]; then
+            echo "::error::빌드된 msi(${msi[*]})가 태그 버전 ${version}과 맞지 않습니다."
+            exit 1
+          fi
           mkdir release
-          cp dist/knou-auto-player-windows-x64/*.msi "release/KNOUAuto-${version}.msi"
+          cp "${msi[0]}" "release/KNOUAuto-${version}.msi"
+          cp dist/knou-auto-player-windows-x64-portable/*.zip "release/KNOUAuto-${version}-windows-portable.zip"
           cp dist/knou-auto-player-macos-arm64/*.dmg "release/KNOUAuto-${version}-macos-arm64.dmg"
           cp dist/knou-auto-player-macos-x64/*.dmg "release/KNOUAuto-${version}-macos-x64.dmg"
           ls -l release
 
-      # 같은 태그의 릴리즈가 이미 있으면(재실행 등) 파일만 덮어쓰기
-      - name: Create draft release
+      - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+              existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+              for f in release/*; do
+                name="$(basename "$f")"
+                if grep -qxF "$name" <<< "$existing"; then
+                  echo "skip: $name (이미 있음)"
+                else
+                  gh release upload "$TAG" "$f"
+                fi
+              done
+            else
+              # 태그 재실행 등: 같은 이름 파일은 덮어쓰기
+              gh release upload "$TAG" release/* --clobber
+            fi
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "::error::릴리즈 $TAG 가 없습니다."
+            exit 1
           else
-            gh release create "$GITHUB_REF_NAME" release/* --draft --title "$GITHUB_REF_NAME" --notes ""
+            gh release create "$TAG" release/* --draft --title "$TAG" --notes ""
           fi

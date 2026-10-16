@@ -21,12 +21,13 @@ Aiden Lee님의 [knou-auto-player](https://github.com/leegeunhyeok/knou-auto-pla
 
 ## 설치
 
-[Releases](../../releases)에서 OS에 맞는 설치 파일을 내려받으세요.
+[Releases](../../releases)에서 OS에 맞는 파일을 내려받으세요.
 Java 런타임이 포함되어 있어 JDK 설치 없이 실행됩니다. **Chrome은 설치되어 있어야 합니다.**
 
 | OS | 파일 |
 | --- | --- |
 | Windows (x64) | `KNOUAuto-x.x.x.msi` |
+| Windows 포터블 (설치 없음) | `KNOUAuto-x.x.x-windows-portable.zip` |
 | macOS Apple Silicon (M1 이후) | `KNOUAuto-x.x.x-macos-arm64.dmg` |
 | macOS Intel | `KNOUAuto-x.x.x-macos-x64.dmg` |
 
@@ -34,7 +35,12 @@ Java 런타임이 포함되어 있어 JDK 설치 없이 실행됩니다. **Chrom
 
 `.msi`를 실행하면 설치됩니다. 설치 후 시작 메뉴나 바탕화면 바로가기로 실행하세요.
 
-서명되지 않은 설치 파일이라 처음 실행 시 Windows SmartScreen 경고가 뜹니다. `추가 정보 > 실행`을 누르면 됩니다.
+설치 없이 쓰려면 `-windows-portable.zip`을 원하는 곳에 압축 풀고 `KNOU Auto Player` 폴더의 `KNOU Auto Player.exe`를 실행하세요.
+
+- 관리자 권한이 필요 없고, 폴더째 옮겨도 됩니다.
+- 설정과 자동 로그인 정보는 앱 폴더가 아니라 사용자 계정에 저장됩니다. (설치판과 같은 설정을 함께 씀)
+
+서명되지 않은 파일이라 처음 실행 시 Windows SmartScreen 경고가 뜹니다. `추가 정보 > 실행`을 누르면 됩니다.
 
 ### macOS
 
@@ -83,12 +89,14 @@ xattr -dr com.apple.quarantine "/Applications/KNOU Auto Player.app"
 | --- | --- | --- |
 | fat jar | `./gradlew shadowJar` | `build/libs/` |
 | Windows `.msi` | `gradlew packageWindows` | `build\jpackage\dist\` |
+| Windows 포터블 `.zip` | `gradlew packageWindowsPortable` | `build\jpackage\portable\` |
 | macOS `.dmg` | `./gradlew packageMac` | `build/jpackage/dist/` |
 
 - jpackage는 크로스 빌드가 안 되므로 설치 파일은 각 OS에서 빌드합니다.
-- Windows `.msi` 빌드에는 [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases)가 필요합니다.
-- GitHub Actions의 `Build Release` 워크플로를 수동 실행하면 Windows(x64) `.msi`, macOS(arm64/x64) `.dmg`가 Artifacts로 올라옵니다.
+- Windows `.msi` 빌드에는 [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases)가 필요합니다. 포터블 zip은 WiX 없이 빌드됩니다.
+- GitHub Actions의 `Build Release` 워크플로를 수동 실행하면 Windows(x64) `.msi`·포터블 `.zip`, macOS(arm64/x64) `.dmg`가 Artifacts로 올라옵니다.
 - `v*` 태그를 push하면 같은 파일이 `KNOUAuto-x.x.x*` 이름으로 draft 릴리즈에 첨부됩니다. 릴리즈 노트를 작성한 뒤 공개하면 됩니다.
+- 이미 공개한 릴리즈에 빠진 파일만 추가하려면 워크플로를 수동 실행하면서 `release_tag`에 태그(예: `v1.0.7`)를 넣습니다. 이미 올라간 파일은 덮어쓰지 않습니다.
 
 ## 글꼴
 
