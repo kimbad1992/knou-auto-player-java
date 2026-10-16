@@ -55,6 +55,21 @@ def jpackagePortableDir = layout.buildDirectory.dir('jpackage/portable')
 def osName = System.getProperty('os.name').toLowerCase()
 def jpackageExecutable = "${System.getProperty('java.home')}/bin/jpackage" + (osName.contains('windows') ? '.exe' : '')
 
+// jpackage가 만든 실행 파일(KNOU Auto Player.exe)은 읽기 전용이라 그대로는 지워지지 않으므로, 지우기 전에 쓰기 가능으로 바꾼다
+def makeWritable = { dirProvider ->
+    def root = dirProvider.get().asFile
+    if (root.exists()) {
+        root.setWritable(true)
+        root.eachFileRecurse { it.setWritable(true) }
+    }
+}
+
+tasks.named('clean') {
+    doFirst {
+        makeWritable(layout.buildDirectory.dir('jpackage'))
+    }
+}
+
 // jpackage는 --input 폴더의 모든 jar를 앱에 포함하므로 fat jar 하나만 복사
 tasks.register('prepareJpackageInput', Sync) {
     from shadowJar
@@ -73,6 +88,7 @@ def registerJpackageTask = { String taskName, String osLabel, String osKeyword, 
             if (!osName.contains(osKeyword)) {
                 throw new GradleException("${taskName}은 ${osLabel}에서만 실행할 수 있습니다.")
             }
+            makeWritable(destDir)
             project.delete(destDir)
         }
 
