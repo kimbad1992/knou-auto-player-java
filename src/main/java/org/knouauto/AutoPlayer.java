@@ -146,6 +146,7 @@ public class AutoPlayer {
                         stopReason = "중지했습니다";
                     } else {
                         log.error("오류: " + e.getMessage());
+                        logRootCause(e);
                         stopReason = "오류로 종료했습니다";
                     }
                 } finally {
@@ -216,6 +217,17 @@ public class AutoPlayer {
     public void stop() {
         if (worker != null && !worker.isDone()) {
             worker.cancel(true); // 작업 취소
+        }
+    }
+
+    // Selenium 예외는 겉 메시지만으로 원인을 알기 어려우므로(예: Selenium Manager 준비 실패) 가장 안쪽 원인을 한 줄 더 남긴다
+    private void logRootCause(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (root != e) {
+            log.error("원인: " + root.getClass().getSimpleName() + (root.getMessage() == null ? "" : ": " + root.getMessage()));
         }
     }
 

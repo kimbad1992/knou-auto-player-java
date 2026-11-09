@@ -83,8 +83,10 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         restoreWindowBounds(packed);
 
         updateStartButtonState();
+        // 임시 폴더에 쓸 수 없으면 자동 시작해도 실패하므로 안내만 하고 건너뛴다
+        boolean writable = checkWritableEnvironment();
         // 화면만 확인할 때: java -Dknou.skipAutoLogin=true -jar ...
-        if (!Boolean.getBoolean("knou.skipAutoLogin")) {
+        if (writable && !Boolean.getBoolean("knou.skipAutoLogin")) {
             loadAutoLogin();
         }
     }
@@ -458,10 +460,14 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
         fallback.start();
     }
 
+    // 창 위치 저장 등 정리 작업이 예외를 던져도 종료는 반드시 진행
     private void exitNow() {
-        saveWindowBounds();
-        dispose();
-        System.exit(0);
+        try {
+            saveWindowBounds();
+        } finally {
+            dispose();
+            System.exit(0);
+        }
     }
 
     // ---------------------------------------------------------------- 창 크기·위치 기억
@@ -504,13 +510,38 @@ public class GUI extends JFrame implements ColorLogger.StatusListener {
             return;
         }
         Rectangle bounds = getBounds();
-        windowPrefs.putInt(KEY_WINDOW_X, bounds.x);
-        windowPrefs.putInt(KEY_WINDOW_Y, bounds.y);
-        windowPrefs.putInt(KEY_WINDOW_WIDTH, bounds.width);
-        windowPrefs.putInt(KEY_WINDOW_HEIGHT, bounds.height);
+        // 레지스트리에 쓸 권한이 없으면(낮은 권한 실행) put에서 SecurityException이 나므로 put까지 감싼다
         try {
+            windowPrefs.putInt(KEY_WINDOW_X, bounds.x);
+            windowPrefs.putInt(KEY_WINDOW_Y, bounds.y);
+            windowPrefs.putInt(KEY_WINDOW_WIDTH, bounds.width);
+            windowPrefs.putInt(KEY_WINDOW_HEIGHT, bounds.height);
             windowPrefs.flush();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            System.err.println("창 위치를 저장하지 못했습니다: " + e);
+        }
+    }
+
+    // ---------------------------------------------------------------- 실행 환경 확인
+
+    // 앱이 낮은 권한(Low 무결성)으로 실행되면 임시 폴더·레지스트리에 쓰지 못해 브라우저 드라이버(Selenium Manager),
+    // 자동 로그인(키체인), 설정 저장이 모두 실패한다. Low 무결성 레이블이 붙은 폴더에 압축을 풀면 그 안의 exe가 이렇게 실행된다.
+    private boolean checkWritableEnvironment() {
+        try {
+            Files.deleteIfExists(Files.createTempFile("knou-auto-player-", ".tmp"));
+            return true;
+        } catch (IOException | SecurityException e) {
+            String appPath = System.getProperty("jpackage.app-path", System.getProperty("user.dir"));
+            log.error("임시 폴더에 쓸 수 없어 브라우저와 자동 로그인을 사용할 수 없습니다. ("
+                    + e.getClass().getSimpleName() + ": " + e.getMessage() + ")");
+            log.error("앱이 낮은 권한으로 실행되었을 수 있습니다. 앱 폴더를 다른 위치(예: 문서 폴더)에 새로 압축 풀어 실행하세요.");
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                    "임시 폴더에 쓸 수 없어 브라우저와 자동 로그인을 사용할 수 없습니다.\n"
+                            + "앱이 낮은 권한으로 실행되었을 수 있습니다.\n"
+                            + "앱 폴더를 다른 위치(예: 문서 폴더)에 새로 압축 풀어 실행하세요.\n\n"
+                            + "현재 위치: " + appPath,
+                    APP_NAME, JOptionPane.WARNING_MESSAGE));
+            return false;
         }
     }
 
